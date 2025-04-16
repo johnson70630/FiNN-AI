@@ -1,0 +1,307 @@
+import asyncio
+import aiohttp
+from bs4 import BeautifulSoup
+from datetime import datetime
+import re
+from urllib.parse import urlparse
+from playwright.async_api import async_playwright
+from sqlalchemy.orm import Session
+from ..database import NewsArticle
+from email.utils import parsedate_to_datetime
+
+class NewsScraperService:
+    def __init__(self, db: Session):
+        self.db = db
+        
+        # URLs
+        self.yahoo_rss_urls = [
+            "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC",  # S&P 500
+            "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^IXIC",  # NASDAQ
+            "https://feeds.finance.yahoo.com/rss/2.0/headline?s=MSFT,AAPL,GOOGL,AMZN,META"  # Tech stocks
+        ]
+        self.cnbc_rss_url = "https://www.cnbc.com/id/10000664/device/rss/rss.html"
+        self.finviz_url = "https://finviz.com/news.ashx"
+        self.investing_com_url = "https://www.investing.com/news/stock-market-news"
+        
+        # Settings
+        self.limit = 100
+        self.blocked_domains = [
+            "wsj.com", "barrons.com", "bloomberg.com", "nytimes.com",
+            "reuters.com", "seekingalpha.com", "marketwatch.com"
+        ]
+        
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        self.timeout = aiohttp.ClientTimeout(total=30)
+
+    def should_skip_url(self, url: str) -> bool:
+        """Check if URL should be skipped"""
+        try:
+            domain = urlparse(url).netloc.lower()
+            return any(blocked in domain for blocked in self.blocked_domains)
+        except:
+            return True
+
+    def clean_text(self, text: str) -> str:
+        """Clean text content"""
+        if not text:
+            return ""
+        text = re.sub(r'\s+', ' ', text)
+        return text.strip()
+
+    async def fetch_yahoo_finance(self, session) -> list:
+        """Fetch news from Yahoo Finance RSS feeds"""
+        articles = []
+        
+        for rss_url in self.yahoo_rss_urls:
+            try:
+                async with session.get(rss_url, ssl=False) as response:
+                    if response.status != 200:
+                        print(f"Failed to fetch RSS feed {rss_url}: {response.status}")
+                        continue
+                        
+                    content = await response.text()
+                    articles.extend(self.parse_rss_items(content, "Yahoo Finance"))
+                    
+            except Exception as e:
+                print(f"Error fetching Yahoo Finance RSS {rss_url}: {e}")
+                
+        return articles
+
+    async def fetch_cnbc_news(self, session) -> list:
+        """Fetch news from CNBC RSS feed"""
+        try:
+            async with session.get(self.cnbc_rss_url) as response:
+                if response.status == 200:
+                    content = await response.text()
+                    return self.parse_rss_items(content, "CNBC")
+        except Exception as e:
+            print(f"CNBC error: {e}")
+        return []
+
+    async def fetch_finviz_news(self, session) -> list:
+        """Fetch news from Finviz"""
+        try:
+            async with session.get(self.finviz_url) as response:
+                if response.status == 200:
+                    content = await response.text()
+                    return self.parse_finviz_items(content)
+        except Exception as e:
+            print(f"Finviz error: {e}")
+        return []
+
+    async def fetch_investing_com(self, session) -> list:
+        """Fetch news from Investing.com"""
+        try:
+            async with session.get(self.investing_com_url) as response:
+                if response.status == 200:
+                    content = await response.text()
+                    return self.parse_investing_com_items(content)
+        except Exception as e:
+            print(f"Investing.com error: {e}")
+        return []
+
+    def parse_rss_items(self, content: str, source: str) -> list:
+        """Parse RSS feed items"""
+        soup = BeautifulSoup(content, 'xml')
+        items = soup.find_all('item')[:self.limit]
+        results = []
+        
+        for item in items:
+            title_tag = item.find('title')
+            link_tag = item.find('link')
+            date_tag = item.find('pubDate')
+            desc_tag = item.find('description')
+            
+            if not all([title_tag, link_tag]):
+                continue
+                
+            title = self.clean_text(title_tag.get_text())
+            link = link_tag.get_text().strip()
+            
+            if self.should_skip_url(link):
+                continue
+                
+            pub_date = parsedate_to_datetime(date_tag.get_text().strip()) if date_tag else datetime.now()
+            summary = self.clean_text(BeautifulSoup(desc_tag.get_text(), 'html.parser').get_text()) if desc_tag else ""
+
+            results.append(NewsArticle(
+                title=title,
+                url=link,
+                date=pub_date,
+                content=summary,
+                source=source
+            ))
+            
+        return results
+
+    def parse_finviz_items(self, content: str) -> list:
+        """Parse Finviz news items"""
+        soup = BeautifulSoup(content, 'html.parser')
+        items = []
+        
+        for a in soup.find_all('a', href=True):
+            if len(items) >= self.limit:
+                break
+                
+            href = a['href']
+            if not (href.startswith('http') and 'finviz' not in href):
+                continue
+                
+            if self.should_skip_url(href):
+                continue
+                
+            title = self.clean_text(a.get_text())
+            if not title:
+                continue
+                
+            pub_time = datetime.now()
+            if a.previous_sibling:
+                time_text = str(a.previous_sibling).strip()
+                if time_text:
+                    if time_text.endswith("AM") or time_text.endswith("PM"):
+                        try:
+                            today = datetime.now()
+                            pub_time = datetime.strptime(f"{today.strftime('%Y-%m-%d')} {time_text}", "%Y-%m-%d %I:%M %p")
+                        except:
+                            pass
+                    else:
+                        try:
+                            year = datetime.now().year
+                            pub_time = datetime.strptime(f"{time_text} {year}", "%b-%d %Y")
+                        except:
+                            pass
+
+            items.append(NewsArticle(
+                title=title,
+                url=href,
+                date=pub_time,
+                content="",  # Will be updated with full content
+                source="Finviz"
+            ))
+            
+        return items
+
+    def parse_investing_com_items(self, content: str) -> list:
+        """Parse Investing.com news items"""
+        soup = BeautifulSoup(content, 'html.parser')
+        items = []
+        
+        for article in soup.find_all('article', class_='js-article-item'):
+            if len(items) >= self.limit:
+                break
+                
+            title_tag = article.find('a', class_='title')
+            if not title_tag:
+                continue
+                
+            title = self.clean_text(title_tag.get_text())
+            url = f"https://www.investing.com{title_tag['href']}"
+            
+            time_tag = article.find('span', class_='date')
+            pub_time = datetime.now()
+            if time_tag:
+                try:
+                    time_text = time_tag.get_text().strip()
+                    if "ago" in time_text.lower():
+                        # Handle relative time (e.g., "5 hours ago")
+                        pass  # Use current time
+                    else:
+                        # Handle absolute time
+                        pub_time = datetime.strptime(time_text, "%b %d, %Y")
+                except:
+                    pass
+
+            items.append(NewsArticle(
+                title=title,
+                url=url,
+                date=pub_time,
+                content="",  # Will be updated with full content
+                source="Investing.com"
+            ))
+            
+        return items
+
+    async def fetch_full_content(self, playwright, url: str) -> str:
+        """Fetch full article content using Playwright"""
+        if self.should_skip_url(url):
+            return "[Content blocked or requires subscription]"
+            
+        try:
+            browser = await playwright.chromium.launch()
+            page = await browser.new_page()
+            await page.goto(url, timeout=40000, wait_until="domcontentloaded")
+            content = await page.content()
+            soup = BeautifulSoup(content, 'html.parser')
+            
+            article = soup.find('article')
+            if article:
+                text = article.get_text()
+            else:
+                paragraphs = soup.find_all('p')
+                text = '\n'.join(p.get_text() for p in paragraphs)
+                
+            await browser.close()
+            return self.clean_text(text)
+            
+        except Exception as e:
+            print(f"Error loading {url}: {e}")
+            return ""
+
+    async def fetch_all_news(self) -> list:
+        """Fetch news from all sources"""
+        connector = aiohttp.TCPConnector(limit=10)
+        async with aiohttp.ClientSession(headers=self.headers, timeout=self.timeout, connector=connector) as session:
+            # Fetch from all sources
+            yahoo_task = asyncio.create_task(self.fetch_yahoo_finance(session))
+            cnbc_task = asyncio.create_task(self.fetch_cnbc_news(session))
+            finviz_task = asyncio.create_task(self.fetch_finviz_news(session))
+            investing_task = asyncio.create_task(self.fetch_investing_com(session))
+            
+            all_news = []
+            for task in [yahoo_task, cnbc_task, finviz_task, investing_task]:
+                try:
+                    articles = await task
+                    all_news.extend(articles)
+                except Exception as e:
+                    print(f"Error in news task: {e}")
+
+        # Fetch full content for each article
+        async with async_playwright() as p:
+            tasks = []
+            for article in all_news:
+                task = asyncio.create_task(self.fetch_full_content(p, article.url))
+                tasks.append((article, task))
+
+            for article, task in tasks:
+                content = await task
+                if content:
+                    article.content = content
+
+        return all_news
+
+    def get_existing_urls(self) -> set:
+        """Get URLs of existing articles"""
+        return {article.url for article in self.db.query(NewsArticle).all()}
+
+    async def update_news_database(self) -> int:
+        """Update the news database by scraping all sources"""
+        # Get existing URLs
+        existing_urls = self.get_existing_urls()
+        
+        # Scrape new articles
+        new_articles = await self.fetch_all_news()
+        
+        # Filter out duplicates and add new articles
+        added_count = 0
+        for article in new_articles:
+            if article.url not in existing_urls:
+                self.db.add(article)
+                added_count += 1
+        
+        # Commit changes
+        if added_count > 0:
+            self.db.commit()
+            
+        return added_count
