@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Finance News AI Agent
 
 This project implements a finance news AI agent using LangChain's RAG system with GPT-4 and AWS services.
@@ -28,3 +29,6 @@ AWS_REGION=your_aws_region
 ```bash
 uvicorn app.main:app --reload
 ```
+=======
+# Financial-News-AI-Agent
+>>>>>>> 7fe853eb713e40962ad5e729da5da4c2690b2932

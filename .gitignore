@@ -37,3 +37,6 @@ data/*.db
 
 # Logs
 *.log
+
+# Mac
+.DS_Store
