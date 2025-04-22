@@ -229,11 +229,28 @@ class NewsScraperService:
             return "[Content blocked or requires subscription]"
             
         try:
-            browser = await playwright.chromium.launch()
-            page = await browser.new_page()
-            await page.goto(url, timeout=40000, wait_until="domcontentloaded")
+            browser = await playwright.chromium.launch(args=['--disable-gpu', '--no-sandbox', '--disable-dev-shm-usage'])
+            context = await browser.new_context(
+                viewport={'width': 1280, 'height': 720},
+                user_agent=self.headers['User-Agent']
+            )
+            page = await context.new_page()
+            
+            # Reduce timeout and add navigation timeout
+            try:
+                await page.goto(url, timeout=20000, wait_until="domcontentloaded")
+            except Exception as e:
+                print(f"Timeout loading {url}: {e}")
+                await browser.close()
+                return ""
+                
             content = await page.content()
             soup = BeautifulSoup(content, 'html.parser')
+            
+            # Memory optimization: Clear page content after parsing
+            await page.evaluate("document.body.innerHTML = ''")
+            await context.close()
+            await browser.close()
             
             article = soup.find('article')
             if article:
@@ -241,8 +258,9 @@ class NewsScraperService:
             else:
                 paragraphs = soup.find_all('p')
                 text = '\n'.join(p.get_text() for p in paragraphs)
-                
-            await browser.close()
+            
+            # Clear beautiful soup objects
+            soup.decompose()
             return self.clean_text(text)
             
         except Exception as e:
@@ -251,7 +269,7 @@ class NewsScraperService:
 
     async def fetch_all_news(self) -> list:
         """Fetch news from all sources"""
-        connector = aiohttp.TCPConnector(limit=10)
+        connector = aiohttp.TCPConnector(limit=5)  # Reduced connection limit
         async with aiohttp.ClientSession(headers=self.headers, timeout=self.timeout, connector=connector) as session:
             # Fetch from all sources
             yahoo_task = asyncio.create_task(self.fetch_yahoo_finance(session))
@@ -267,23 +285,51 @@ class NewsScraperService:
                 except Exception as e:
                     print(f"Error in news task: {e}")
 
-        # Fetch full content for each article
+        # Process articles in smaller batches
+        batch_size = 5  # Process 5 articles at a time
+        processed_news = []
+        
         async with async_playwright() as p:
-            tasks = []
-            for article in all_news:
-                task = asyncio.create_task(self.fetch_full_content(p, article.url))
-                tasks.append((article, task))
+            for i in range(0, len(all_news), batch_size):
+                batch = all_news[i:i + batch_size]
+                tasks = []
+                for article in batch:
+                    task = asyncio.create_task(self.fetch_full_content(p, article.url))
+                    tasks.append((article, task))
 
-            for article, task in tasks:
-                content = await task
-                if content:
-                    article.content = content
+                for article, task in tasks:
+                    try:
+                        content = await task
+                        if content:
+                            article.content = content
+                            processed_news.append(article)
+                    except Exception as e:
+                        print(f"Error processing article {article.url}: {e}")
+                        continue
+                
+                # Add a small delay between batches to prevent overload
+                await asyncio.sleep(1)
 
-        return all_news
+        return processed_news
 
     def get_existing_urls(self) -> set:
         """Get URLs of existing articles"""
-        return {article.url for article in self.db.query(NewsArticle).all()}
+        try:
+            # Only select the URL column to avoid issues with missing columns
+            return {article.url for article in self.db.query(NewsArticle.url).all()}
+        except Exception as e:
+            print(f"Error getting existing URLs: {e}")
+            # Fallback method if there's an issue with the query
+            try:
+                # Try a more robust approach that explicitly gets just the urls
+                from sqlalchemy import select
+                stmt = select(NewsArticle.url)
+                result = self.db.execute(stmt)
+                return {row[0] for row in result if row[0]}
+            except Exception as e2:
+                print(f"Second error getting URLs: {e2}")
+                # Last resort fallback - return empty set if we can't query the database
+                return set()
 
     async def update_news_database(self) -> int:
         """Update the news database by scraping all sources"""

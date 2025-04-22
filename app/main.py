@@ -4,6 +4,7 @@ from typing import Dict, List
 from datetime import datetime
 from .database import get_db, NewsArticle, SocialMediaPost, FinancialTerm
 from .services.rag_service import RAGService
+from .data_collection.scraper_service import DataCollectionService
 
 app = FastAPI(title="Finance News AI")
 
@@ -15,9 +16,10 @@ def read_root():
 async def update_data(db: Session = Depends(get_db)):
     """Update all data sources (news, social media, financial terms)"""
     try:
-        rag = RAGService(db)
-        new_items = await rag.update_news_database()
-        return {"message": f"Added {new_items} new items"}
+        # Use the dedicated data collection service instead of RAGService
+        collector = DataCollectionService(db)
+        new_items = await collector.update_all_data()
+        return {"message": f"Added {new_items} new items and saved to data directory"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
