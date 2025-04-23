@@ -4,6 +4,9 @@ import os
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from ..database import SocialMediaPost
+import time
+import schedule
+import threading
 
 class SocialMediaScraperService:
     def __init__(self, db: Session):
@@ -28,6 +31,10 @@ class SocialMediaScraperService:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         self.timeout = aiohttp.ClientTimeout(total=30)
+        
+        # Scheduling properties
+        self.is_scheduled = False
+        self.scheduler_thread = None
 
     async def fetch_twitter_posts(self, session) -> list:
         """Fetch recent finance-related tweets"""
@@ -176,3 +183,48 @@ class SocialMediaScraperService:
             self.db.commit()
             
         return added_count
+
+    def hourly_update_job(self):
+        """Run the update_posts_database function in the event loop"""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(self.update_posts_database())
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Scheduled social media job completed. Added {result} new posts.")
+        except Exception as e:
+            print(f"Error in scheduled social media job: {e}")
+        finally:
+            loop.close()
+    
+    def start_hourly_scheduling(self):
+        """Start hourly scheduling of social media scraping"""
+        if self.is_scheduled:
+            print("Hourly social media scheduling is already running")
+            return
+        
+        def run_scheduler():
+            schedule.every(1).hour.do(self.hourly_update_job)
+            # Run the job immediately when starting
+            self.hourly_update_job()
+            
+            while self.is_scheduled:
+                schedule.run_pending()
+                time.sleep(60)  # Check every minute
+        
+        self.is_scheduled = True
+        self.scheduler_thread = threading.Thread(target=run_scheduler)
+        self.scheduler_thread.daemon = True
+        self.scheduler_thread.start()
+        print("Started hourly scheduling of social media updates")
+    
+    def stop_hourly_scheduling(self):
+        """Stop the hourly scheduling"""
+        if not self.is_scheduled:
+            print("Hourly social media scheduling is not running")
+            return
+        
+        self.is_scheduled = False
+        if self.scheduler_thread:
+            self.scheduler_thread.join(timeout=2)
+            self.scheduler_thread = None
+        print("Stopped hourly scheduling of social media updates")

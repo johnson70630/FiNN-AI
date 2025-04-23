@@ -8,6 +8,9 @@ from playwright.async_api import async_playwright
 from sqlalchemy.orm import Session
 from ..database import NewsArticle
 from email.utils import parsedate_to_datetime
+import time
+import schedule
+import threading
 
 class NewsScraperService:
     def __init__(self, db: Session):
@@ -34,6 +37,10 @@ class NewsScraperService:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         self.timeout = aiohttp.ClientTimeout(total=30)
+        
+        # Scheduling properties
+        self.is_scheduled = False
+        self.scheduler_thread = None
 
     def should_skip_url(self, url: str) -> bool:
         """Check if URL should be skipped"""
@@ -104,37 +111,63 @@ class NewsScraperService:
 
     def parse_rss_items(self, content: str, source: str) -> list:
         """Parse RSS feed items"""
-        soup = BeautifulSoup(content, 'xml')
-        items = soup.find_all('item')[:self.limit]
-        results = []
-        
-        for item in items:
-            title_tag = item.find('title')
-            link_tag = item.find('link')
-            date_tag = item.find('pubDate')
-            desc_tag = item.find('description')
+        try:
+            # First try parsing as XML
+            soup = BeautifulSoup(content, 'xml')
+            items = soup.find_all('item')
             
-            if not all([title_tag, link_tag]):
-                continue
-                
-            title = self.clean_text(title_tag.get_text())
-            link = link_tag.get_text().strip()
+            # If no items found, try parsing as HTML
+            if not items:
+                soup = BeautifulSoup(content, 'html.parser')
+                items = soup.find_all('item')
             
-            if self.should_skip_url(link):
-                continue
+            # Limit to the maximum number of items
+            items = items[:self.limit]
+            results = []
+            
+            for item in items:
+                title_tag = item.find('title')
+                link_tag = item.find('link')
+                date_tag = item.find('pubDate')
+                desc_tag = item.find('description')
                 
-            pub_date = parsedate_to_datetime(date_tag.get_text().strip()) if date_tag else datetime.now()
-            summary = self.clean_text(BeautifulSoup(desc_tag.get_text(), 'html.parser').get_text()) if desc_tag else ""
+                if not all([title_tag, link_tag]):
+                    continue
+                    
+                title = self.clean_text(title_tag.get_text())
+                link = link_tag.get_text().strip()
+                
+                if self.should_skip_url(link):
+                    continue
+                    
+                pub_date = None
+                if date_tag:
+                    date_text = date_tag.get_text().strip()
+                    try:
+                        pub_date = parsedate_to_datetime(date_text)
+                    except Exception:
+                        pub_date = datetime.now()
+                else:
+                    pub_date = datetime.now()
+                
+                summary = ""
+                if desc_tag:
+                    desc_text = desc_tag.get_text()
+                    # Don't parse HTML here directly, just clean the text
+                    summary = self.clean_text(desc_text)
 
-            results.append(NewsArticle(
-                title=title,
-                url=link,
-                date=pub_date,
-                content=summary,
-                source=source
-            ))
-            
-        return results
+                results.append(NewsArticle(
+                    title=title,
+                    url=link,
+                    date=pub_date,
+                    content=summary,
+                    source=source
+                ))
+                
+            return results
+        except Exception as e:
+            print(f"Error parsing RSS from {source}: {e}")
+            return []
 
     def parse_finviz_items(self, content: str) -> list:
         """Parse Finviz news items"""
@@ -351,3 +384,48 @@ class NewsScraperService:
             self.db.commit()
             
         return added_count
+
+    def hourly_update_job(self):
+        """Run the update_news_database function in the event loop"""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(self.update_news_database())
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Scheduled news job completed. Added {result} new articles.")
+        except Exception as e:
+            print(f"Error in scheduled news job: {e}")
+        finally:
+            loop.close()
+    
+    def start_hourly_scheduling(self):
+        """Start hourly scheduling of news scraping"""
+        if self.is_scheduled:
+            print("Hourly news scheduling is already running")
+            return
+        
+        def run_scheduler():
+            schedule.every(1).hour.do(self.hourly_update_job)
+            # Run the job immediately when starting
+            self.hourly_update_job()
+            
+            while self.is_scheduled:
+                schedule.run_pending()
+                time.sleep(60)  # Check every minute
+        
+        self.is_scheduled = True
+        self.scheduler_thread = threading.Thread(target=run_scheduler)
+        self.scheduler_thread.daemon = True
+        self.scheduler_thread.start()
+        print("Started hourly scheduling of news updates")
+    
+    def stop_hourly_scheduling(self):
+        """Stop the hourly scheduling"""
+        if not self.is_scheduled:
+            print("Hourly news scheduling is not running")
+            return
+        
+        self.is_scheduled = False
+        if self.scheduler_thread:
+            self.scheduler_thread.join(timeout=2)
+            self.scheduler_thread = None
+        print("Stopped hourly scheduling of news updates")

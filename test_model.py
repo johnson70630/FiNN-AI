@@ -2,10 +2,11 @@ import pytest
 import asyncio
 import os
 import json
+import sys
 from datetime import datetime
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker, Session
-from app.database import Base, NewsArticle, SocialMediaPost, FinancialTerm
+from app.database import Base, NewsArticle, SocialMediaPost, FinancialTerm, engine as prod_engine
 from app.scrapers.news_scraper import NewsScraperService
 from app.scrapers.financial_knowledge import FinancialKnowledgeService
 from app.scrapers.social_media_scraper import SocialMediaScraperService
@@ -285,3 +286,155 @@ def test_database_session(db_session):
     
     result = db_session.query(NewsArticle).filter_by(url="http://test.com/rollback").first()
     assert result is None
+
+# ASCII art banner for chatbot mode
+BANNER = """
+╔═══════════════════════════════════════════════════════════════════╗
+║                                                                   ║
+║   ███████╗██╗███╗   ██╗ █████╗ ███╗   ██╗ ██████╗███████╗        ║
+║   ██╔════╝██║████╗  ██║██╔══██╗████╗  ██║██╔════╝██╔════╝        ║
+║   █████╗  ██║██╔██╗ ██║███████║██╔██╗ ██║██║     █████╗          ║
+║   ██╔══╝  ██║██║╚██╗██║██╔══██║██║╚██╗██║██║     ██╔══╝          ║
+║   ██║     ██║██║ ╚████║██║  ██║██║ ╚████║╚██████╗███████╗        ║
+║   ╚═╝     ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝╚══════╝        ║
+║                                                                   ║
+║    ██████╗██╗  ██╗ █████╗ ████████╗██████╗  ██████╗ ████████╗    ║
+║   ██╔════╝██║  ██║██╔══██╗╚══██╔══╝██╔══██╗██╔═══██╗╚══██╔══╝    ║
+║   ██║     ███████║███████║   ██║   ██████╔╝██║   ██║   ██║       ║
+║   ██║     ██╔══██║██╔══██║   ██║   ██╔══██╗██║   ██║   ██║       ║
+║   ╚██████╗██║  ██║██║  ██║   ██║   ██████╔╝╚██████╔╝   ██║       ║
+║    ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚═════╝  ╚═════╝    ╚═╝       ║
+║                                                                   ║
+╚═══════════════════════════════════════════════════════════════════╝
+"""
+
+HELP_TEXT = """
+Available commands:
+- 'help': Display this help message
+- 'stats': Show database statistics
+- 'exit' or 'quit': Exit the chatbot
+- Any other input will be treated as a question to the financial assistant
+"""
+
+async def get_database_stats(db):
+    """Get statistics about the database content"""
+    news_count = db.query(func.count(NewsArticle.id)).scalar()
+    social_count = db.query(func.count(SocialMediaPost.id)).scalar()
+    terms_count = db.query(func.count(FinancialTerm.id)).scalar()
+    
+    stats = f"""
+Database Statistics:
+-------------------
+News Articles: {news_count}
+Social Media Posts: {social_count}
+Financial Terms: {terms_count}
+Total Items: {news_count + social_count + terms_count}
+"""
+    return stats
+
+async def run_interactive_chatbot():
+    """Run the interactive chatbot using the production database"""
+    # Use the production database
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=prod_engine)
+    db = SessionLocal()
+    
+    try:
+        # Create a simple RAG service
+        try:
+            rag_service = RAGService(db)
+        except Exception as e:
+            print(f"Error initializing RAG service: {e}")
+            print("Falling back to simpler question processing...")
+            rag_service = None
+        
+        # Print welcome message
+        print(BANNER)
+        print("\nWelcome to the Finance Research Chatbot!")
+        print("Ask me anything about finance, news, or financial terms.")
+        print("Type 'help' for available commands or 'exit' to quit.\n")
+        
+        # Main interaction loop
+        while True:
+            # Get user input
+            user_input = input("\n🔍 Ask a question: ").strip()
+            
+            # Process commands
+            if user_input.lower() in ['exit', 'quit']:
+                print("\nThank you for using the Finance Research Chatbot. Goodbye!")
+                break
+                
+            elif user_input.lower() == 'help':
+                print(HELP_TEXT)
+                
+            elif user_input.lower() == 'stats':
+                stats = await get_database_stats(db)
+                print(stats)
+                
+            elif user_input:
+                print("\n⏳ Processing...")
+                try:
+                    if rag_service:
+                        # Try to use the RAG service
+                        try:
+                            response = await rag_service.process_question(user_input)
+                        except Exception as e:
+                            print(f"\n⚠️ RAG service error: {e}")
+                            print("Falling back to simpler processing...")
+                            response = await simple_query_processing(db, user_input)
+                    else:
+                        # Use simple processing
+                        response = await simple_query_processing(db, user_input)
+                    
+                    print("\n🤖 Answer:")
+                    print(response)
+                except Exception as e:
+                    print(f"\n❌ Error: {str(e)}")
+                    print("Please try a different question.")
+            
+            else:
+                print("Please enter a question or command.")
+    
+    finally:
+        # Close the session
+        db.close()
+
+async def simple_query_processing(db, query):
+    """Simple query processing when RAG service is not available"""
+    # Get relevant data
+    news_results = db.query(NewsArticle).limit(5).all()
+    term_results = db.query(FinancialTerm).limit(5).all()
+    social_results = db.query(SocialMediaPost).limit(5).all()
+    
+    # Format response
+    response = f"Your question: {query}\n\n"
+    
+    # Add news articles
+    if news_results:
+        response += "Here are some recent news articles:\n"
+        for i, article in enumerate(news_results):
+            response += f"{i+1}. {article.title} ({article.source})\n"
+        response += "\n"
+    
+    # Add financial terms
+    if term_results:
+        response += "Here are some financial terms that might be relevant:\n"
+        for i, term in enumerate(term_results):
+            response += f"{i+1}. {term.term}: {term.definition[:100]}...\n"
+        response += "\n"
+    
+    # Add social media posts
+    if social_results:
+        response += "Here are some recent social media posts:\n"
+        for i, post in enumerate(social_results):
+            response += f"{i+1}. {post.platform} post by {post.user}: {post.content[:100]}...\n"
+    
+    return response
+
+if __name__ == "__main__":
+    # This code runs when the file is executed directly
+    if len(sys.argv) > 1 and sys.argv[1] == "--chatbot":
+        # Run in chatbot mode
+        asyncio.run(run_interactive_chatbot())
+    else:
+        print("Running in test mode. Use --chatbot flag to run in interactive chatbot mode.")
+        print("Example: python test_model.py --chatbot")
