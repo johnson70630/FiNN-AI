@@ -6,6 +6,9 @@ from langchain_core.runnables import RunnablePassthrough
 from typing import List, Dict, TypedDict, Annotated, Sequence
 from typing_extensions import TypedDict
 import os
+import sys
+import logging
+from dotenv import load_dotenv, find_dotenv
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 import torch
 from langgraph.graph import StateGraph, END
@@ -14,6 +17,9 @@ from ..scrapers.news_scraper import NewsScraperService
 from ..scrapers.financial_knowledge import FinancialKnowledgeService
 from ..scrapers.social_media_scraper import SocialMediaScraperService
 from ..database import get_db, NewsArticle, SocialMediaPost, FinancialTerm, store_embedding, search_by_embedding
+
+# Explicitly load environment variables
+load_dotenv(find_dotenv())
 
 class AgentState(TypedDict):
     """Type for tracking state in the graph"""
@@ -28,10 +34,21 @@ class AgentState(TypedDict):
 class RAGService:
     def __init__(self, db: Session = None):
         # Initialize models and services
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            # Try to load the environment again
+            load_dotenv(find_dotenv())
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                raise ValueError("OpenAI API key not found in environment variables. Please check your .env file.")
+        
+        # Print API key info for debugging (masked)
+        print(f"Using OpenAI API key: {api_key[:5]}...{api_key[-5:]}")
+        
         self.task_llm = ChatOpenAI(
             model="gpt-4",
             temperature=0,
-            api_key=os.getenv("OPENAI_API_KEY")
+            api_key=api_key
         )
         self.finbert_tokenizer = AutoTokenizer.from_pretrained("ProsusAI/finbert")
         self.finbert_model = AutoModelForSequenceClassification.from_pretrained("ProsusAI/finbert")
@@ -182,6 +199,10 @@ class RAGService:
 
     async def process_question(self, question: str) -> str:
         """Process a user question through the RAG pipeline"""
+        # Reset the graph to prevent state conflicts
+        self.graph = self._setup_graph()
+        
+        # Initialize the state
         state = AgentState(
             question=question,
             task_list="",
@@ -192,5 +213,11 @@ class RAGService:
             terms_data=[]
         )
         
-        final_state = await self.graph.arun(state)
-        return final_state["final_response"]
+        try:
+            final_state = await self.graph.arun(state)
+            return final_state["final_response"]
+        except Exception as e:
+            # Provide a more helpful error message
+            error_msg = f"Error processing question: {str(e)}"
+            print(error_msg)
+            return f"I'm sorry, I encountered an error while processing your question. Please try again with a different query related to finance. Error details: {str(e)[:100]}..."

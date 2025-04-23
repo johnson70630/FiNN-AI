@@ -84,6 +84,23 @@ python finance_data_tools.py view --news --limit 10
 python finance_data_tools.py schedule --interval 60
 ```
 
+### API Query Client
+
+The `test_query.py` script provides an easy way to send queries to the main.py API server. This client tool connects to the backend API and displays the results:
+
+```bash
+# Query the API (enclose question in quotes)
+python test_query.py "What are the latest trends in tech stocks?"
+
+# Ask about recent financial news
+python test_query.py "Tell me about recent cryptocurrency news"
+
+# Learn about financial terms
+python test_query.py "Explain what a bear market is"
+```
+
+This client shows which service processed your query (either the RAG service or the fallback simple query service) and displays the answer. It's the recommended way to interact with your API.
+
 ### Test Model and Interactive Chatbot
 
 The `test_model.py` script serves two purposes: testing the system components and providing an interactive chatbot interface:
@@ -111,13 +128,16 @@ In chatbot mode, you can:
 │   │   ├── social_media_scraper.py   # Social media post collection
 │   │   └── financial_knowledge.py    # Financial terms collection
 │   ├── services/          # Core business logic
-│   │   └── rag_service.py # RAG implementation for Q&A
+│   │   ├── rag_service.py         # RAG implementation for Q&A
+│   │   └── simple_query_service.py # Fallback query service
 │   ├── data_collection/   # Scheduling and coordination
 │   ├── database.py        # Database configuration and models
 │   └── main.py           # Web API entry point
 ├── data/                 # Data storage directory (SQLite database)
 ├── finance_data_tools.py # Comprehensive CLI tool for data management
 ├── test_model.py        # Testing and interactive chatbot
+├── test_query.py        # Client for querying the API
+├── simple_finance_query.py # Direct database query tool
 ├── requirements.txt     # Project dependencies
 └── README.md           # Project documentation
 ```

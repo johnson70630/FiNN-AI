@@ -2,13 +2,20 @@ from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import Dict, List
 from datetime import datetime
-from .database import get_db, NewsArticle, SocialMediaPost, FinancialTerm
-from .services.rag_service import RAGService
-from .data_collection.scraper_service import DataCollectionService, ScraperCoordinator
 import logging
 import asyncio
 import os
 import sys
+import uvicorn
+
+# Add the project root to Python path when running directly
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Now import with absolute paths to ensure it works in all contexts
+from app.database import get_db, NewsArticle, SocialMediaPost, FinancialTerm
+from app.services.rag_service import RAGService
+from app.services.simple_query_service import SimpleQueryService
+from app.data_collection.scraper_service import DataCollectionService, ScraperCoordinator
 from sqlalchemy import func
 
 # Configure logging
@@ -150,10 +157,28 @@ async def query_data(query: Dict[str, str], db: Session = Depends(get_db)):
     try:
         if "question" not in query:
             raise HTTPException(status_code=400, detail="Question is required")
-            
-        rag = RAGService(db)
-        response = await rag.process_question(query["question"])
-        return {"answer": response}
+        
+        try:
+            # First try using the RAG service
+            logger.info(f"Processing question with RAG service: {query['question'][:50]}...")
+            rag = RAGService(db)
+            response = await rag.process_question(query["question"])
+            return {"answer": response, "service": "rag"}
+        except Exception as rag_error:
+            # If RAG service fails, fall back to simple query service
+            logger.warning(f"RAG service error: {str(rag_error)}. Falling back to simple query service.")
+            logger.info(f"Processing question with simple query service: {query['question'][:50]}...")
+            simple_query = SimpleQueryService(db)
+            response = await simple_query.process_question(query["question"])
+            return {"answer": response, "service": "simple_query"}
         
     except Exception as e:
+        logger.error(f"Error processing query: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+if __name__ == "__main__":
+    # Run the FastAPI app directly with uvicorn
+    print("Starting server at http://localhost:8000...")
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
