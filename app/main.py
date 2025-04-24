@@ -8,6 +8,8 @@ import os
 import sys
 import uvicorn
 
+from fastapi.middleware.cors import CORSMiddleware
+
 # Add the project root to Python path when running directly
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -26,6 +28,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Finance News AI")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Or restrict to ["http://localhost:5500"] if needed
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Global instance of the scraper coordinator for use in background tasks
 scraper_coordinator = None
@@ -48,6 +58,10 @@ async def startup_event():
         
     except Exception as e:
         logger.error(f"Error starting scraping services: {str(e)}")
+
+# @app.on_event("startup")
+# async def startup_event():
+#     logger.info("Skipping scraper coordinator on startup (no scraping needed).")
 
 @app.on_event("shutdown")
 async def shutdown_event():
