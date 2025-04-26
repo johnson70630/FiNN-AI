@@ -40,28 +40,28 @@ app.add_middleware(
 # Global instance of the scraper coordinator for use in background tasks
 scraper_coordinator = None
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize services when the FastAPI app starts"""
-    global scraper_coordinator
-    try:
-        # Get a database session
-        db = next(get_db())
-        
-        # Initialize the scraper coordinator
-        scraper_coordinator = ScraperCoordinator(db=db)
-        
-        # Start the hourly scraping
-        logger.info("Starting hourly data collection service...")
-        scraper_coordinator.start_scheduled_scraping(interval_minutes=60)
-        logger.info("Hourly data collection service started")
-        
-    except Exception as e:
-        logger.error(f"Error starting scraping services: {str(e)}")
-
 # @app.on_event("startup")
 # async def startup_event():
-#     logger.info("Skipping scraper coordinator on startup (no scraping needed).")
+#     """Initialize services when the FastAPI app starts"""
+#     global scraper_coordinator
+#     try:
+#         # Get a database session
+#         db = next(get_db())
+        
+#         # Initialize the scraper coordinator
+#         scraper_coordinator = ScraperCoordinator(db=db)
+        
+#         # Start the hourly scraping
+#         logger.info("Starting hourly data collection service...")
+#         scraper_coordinator.start_scheduled_scraping(interval_minutes=60)
+#         logger.info("Hourly data collection service started")
+        
+#     except Exception as e:
+#         logger.error(f"Error starting scraping services: {str(e)}")
+
+@app.on_event("startup")
+async def startup_event():
+    logger.info("Skipping scraper coordinator on startup (no scraping needed).")
 
 @app.on_event("shutdown")
 async def shutdown_event():

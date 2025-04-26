@@ -55,6 +55,27 @@ class FinancialTerm(Base):
     url = Column(String)
     embedding = Column(LargeBinary, nullable=True)  # For vector search
 
+
+class InvestopediaDict(Base):
+    __tablename__ = "investopedia_dict"
+    id        = Column(Integer, primary_key=True, index=True)
+    article_id= Column(Integer, index=True)
+    url       = Column(String)
+    title     = Column(String)
+    content   = Column(Text)
+    embedding = Column(LargeBinary, nullable=True)
+
+class InvestingCom(Base):
+    __tablename__ = "investing_com"
+    id        = Column(Integer, primary_key=True, index=True)
+    article_id= Column(Integer, index=True)
+    url       = Column(String)
+    title     = Column(String)
+    published = Column(String)
+    content   = Column(Text)
+    embedding = Column(LargeBinary, nullable=True)
+
+
 # Dependency to get database session
 def get_db():
     db = SessionLocal()

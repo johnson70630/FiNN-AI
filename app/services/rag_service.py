@@ -16,7 +16,13 @@ from sqlalchemy.orm import Session
 from ..scrapers.news_scraper import NewsScraperService
 from ..scrapers.financial_knowledge import FinancialKnowledgeService
 from ..scrapers.social_media_scraper import SocialMediaScraperService
-from ..database import get_db, NewsArticle, SocialMediaPost, FinancialTerm, store_embedding, search_by_embedding
+from ..database import get_db, NewsArticle, SocialMediaPost, FinancialTerm, store_embedding, search_by_embedding, InvestopediaDict, InvestingCom
+
+import logging
+
+# Configure logging for this module
+logger = logging.getLogger(__name__)
+
 
 # Explicitly load environment variables
 load_dotenv(find_dotenv())
@@ -107,20 +113,72 @@ class RAGService:
         state["task_list"] = runnable.invoke({"question": state["question"]})
         return state
 
+    # def _context_retrieval_node(self, state: AgentState) -> AgentState:
+    #     """Node for retrieving relevant context"""
+    #     # Get query embedding
+    #     query_embedding = self.embeddings.embed_query(state["question"])
+        
+    #     # Search each content type
+    #     news_results = search_by_embedding(self.db, NewsArticle, query_embedding)
+    #     social_results = search_by_embedding(self.db, SocialMediaPost, query_embedding)
+    #     term_results = search_by_embedding(self.db, FinancialTerm, query_embedding)
+
+    #     invpedia_results = search_by_embedding(self.db, InvestopediaDict, query_embedding)
+    #     invest_com_results = search_by_embedding(self.db, InvestingCom, query_embedding)
+
+    #     # DEBUG: log how many hits came from each table
+    #     logger.info(f"RAG retrieval counts — news: {len(news_results)}, social: {len(social_results)}, "
+    #                 f"terms: {len(term_results)}, investopedia: {len(invpedia_results)}, "
+    #                 f"investing_com: {len(invest_com_results)}")
+
+        
+    #     # Combine all results
+    #     # state["source_docs"] = news_results + social_results
+    #     # state["terms_data"] = term_results
+
+
+    #     state["source_docs"] = (
+    #         news_results
+    #         + social_results
+    #         + invest_com_results
+    #     )
+
+    #     state["terms_data"]  = invpedia_results
+
+    #     return state
+    
     def _context_retrieval_node(self, state: AgentState) -> AgentState:
-        """Node for retrieving relevant context"""
         # Get query embedding
         query_embedding = self.embeddings.embed_query(state["question"])
         
-        # Search each content type
-        news_results = search_by_embedding(self.db, NewsArticle, query_embedding)
-        social_results = search_by_embedding(self.db, SocialMediaPost, query_embedding)
-        term_results = search_by_embedding(self.db, FinancialTerm, query_embedding)
+        print("🔍 InvestopediaDict total rows:", self.db.query(InvestopediaDict).count())
+        print("🔍 InvestopediaDict embedded rows:", self.db.query(InvestopediaDict).filter(InvestopediaDict.embedding.isnot(None)).count())
+
+        # Retrieve from each table
+        news_results       = search_by_embedding(self.db, NewsArticle,       query_embedding)
+        social_results     = search_by_embedding(self.db, SocialMediaPost,   query_embedding)
+        term_results       = search_by_embedding(self.db, FinancialTerm,     query_embedding)
+        invpedia_results   = search_by_embedding(self.db, InvestopediaDict,  query_embedding)
+        invest_com_results = search_by_embedding(self.db, InvestingCom,       query_embedding)
+
+        # DEBUG: how many per table
+        logger.info(
+            f"RAG retrieval counts — "
+            f"news: {len(news_results)}, social: {len(social_results)}, "
+            f"terms: {len(term_results)}, investopedia: {len(invpedia_results)}, "
+            f"investing_com: {len(invest_com_results)}"
+        )
+
+        # Now include FinancialTerm under terms_data
+        state["terms_data"]  = term_results
         
-        # Combine all results
-        state["source_docs"] = news_results + social_results
-        state["terms_data"] = term_results
-        
+        # …and everything else under source_docs
+        state["source_docs"] = (
+            news_results
+            + social_results
+            + invpedia_results
+            + invest_com_results
+        )
         return state
 
     async def _sentiment_analysis_node(self, state: AgentState) -> AgentState:
@@ -164,24 +222,44 @@ class RAGService:
         return state
 
     def _setup_graph(self) -> StateGraph:
-        """Set up the processing graph"""
+        # """Set up the processing graph"""
+        # workflow = StateGraph(AgentState)
+        
+        # # Add nodes
+        # workflow.add_node("task_assignment", self._task_assignment_node)
+        # workflow.add_node("context_retrieval", self._context_retrieval_node)
+        # workflow.add_node("sentiment_analysis", self._sentiment_analysis_node)
+        # workflow.add_node("response_generation", self._response_generation_node)
+        
+        # # Add edges
+        # workflow.add_edge("task_assignment", "context_retrieval")
+        # workflow.add_edge("context_retrieval", "sentiment_analysis")
+        # workflow.add_edge("sentiment_analysis", "response_generation")
+        # workflow.add_edge("response_generation", END)
+        
+        # # Set entry point
+        # workflow.set_entry_point("task_assignment")
+        
+        # return workflow
+    
+        # Set up the graph with unique node IDs
         workflow = StateGraph(AgentState)
-        
-        # Add nodes
-        workflow.add_node("task_assignment", self._task_assignment_node)
-        workflow.add_node("context_retrieval", self._context_retrieval_node)
-        workflow.add_node("sentiment_analysis", self._sentiment_analysis_node)
-        workflow.add_node("response_generation", self._response_generation_node)
-        
-        # Add edges
-        workflow.add_edge("task_assignment", "context_retrieval")
-        workflow.add_edge("context_retrieval", "sentiment_analysis")
-        workflow.add_edge("sentiment_analysis", "response_generation")
-        workflow.add_edge("response_generation", END)
-        
-        # Set entry point
-        workflow.set_entry_point("task_assignment")
-        
+
+        # Add nodes (node IDs must NOT match state keys)
+        workflow.add_node("assign_tasks",        self._task_assignment_node)
+        workflow.add_node("retrieve_context",    self._context_retrieval_node)
+        workflow.add_node("analyze_sentiment",   self._sentiment_analysis_node)
+        workflow.add_node("generate_response",   self._response_generation_node)
+
+        # Connect the flow
+        workflow.add_edge("assign_tasks",      "retrieve_context")
+        workflow.add_edge("retrieve_context",  "analyze_sentiment")
+        workflow.add_edge("analyze_sentiment", "generate_response")
+        workflow.add_edge("generate_response", END)
+
+        # Entry point
+        workflow.set_entry_point("assign_tasks")
+
         return workflow
 
     async def _run_finbert_analysis(self, text: str) -> str:
@@ -200,7 +278,7 @@ class RAGService:
     async def process_question(self, question: str) -> str:
         """Process a user question through the RAG pipeline"""
         # Reset the graph to prevent state conflicts
-        self.graph = self._setup_graph()
+        # self.graph = self._setup_graph()
         
         # Initialize the state
         state = AgentState(
@@ -213,9 +291,25 @@ class RAGService:
             terms_data=[]
         )
         
+        # try:
+        #     final_state = await self.graph.arun(state)
+        #     return final_state["final_response"]
+
         try:
-            final_state = await self.graph.arun(state)
-            return final_state["final_response"]
+            # 1) Task assignment
+            state = self._task_assignment_node(state)
+
+            # 2) Context retrieval
+            state = self._context_retrieval_node(state)
+
+            # 3) Sentiment analysis (async)
+            state = await self._sentiment_analysis_node(state)
+
+            # 4) Final response generation
+            state = self._response_generation_node(state)
+
+            return state["final_response"]
+
         except Exception as e:
             # Provide a more helpful error message
             error_msg = f"Error processing question: {str(e)}"
