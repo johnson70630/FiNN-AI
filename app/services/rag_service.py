@@ -1,317 +1,300 @@
+"""
+RAG Service – revised so the LLM actually *uses* the retrieved context.
+
+Key fixes
+---------
+1. `_format_docs` → human-readable blocks for the prompt.
+2. `_response_generation_node` now injects those blocks instead of raw dicts.
+3. `terms_data` carries Investopedia hits (invpedia_results) as requested.
+"""
+
+from __future__ import annotations
+
+import os, logging, torch
+from typing import List, Dict, TypedDict
+from dotenv import load_dotenv, find_dotenv
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
-from typing import List, Dict, TypedDict, Annotated, Sequence
-from typing_extensions import TypedDict
-import os
-import sys
-import logging
-from dotenv import load_dotenv, find_dotenv
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
-import torch
 from langgraph.graph import StateGraph, END
 from sqlalchemy.orm import Session
+
+from ..database import (
+    get_db, NewsArticle, SocialMediaPost, FinancialTerm,
+    InvestopediaDict, InvestingCom, store_embedding, search_by_embedding
+)
 from ..scrapers.news_scraper import NewsScraperService
 from ..scrapers.financial_knowledge import FinancialKnowledgeService
 from ..scrapers.social_media_scraper import SocialMediaScraperService
-from ..database import get_db, NewsArticle, SocialMediaPost, FinancialTerm, store_embedding, search_by_embedding, InvestopediaDict, InvestingCom
 
-import logging
-
-# Configure logging for this module
+# ------------------------------------------------------------------------------
+# Logging / env
+# ------------------------------------------------------------------------------
 logger = logging.getLogger(__name__)
-
-
-# Explicitly load environment variables
 load_dotenv(find_dotenv())
 
+# ------------------------------------------------------------------------------
+# State definition
+# ------------------------------------------------------------------------------
 class AgentState(TypedDict):
-    """Type for tracking state in the graph"""
     question: str
     task_list: str
-    context_data: str
     sentiment_analysis: List[Dict]
     final_response: str
-    source_docs: List[Dict]
-    terms_data: List[Dict]
+    source_docs: List[Dict]      # News + social + InvestingCom
+    terms_data:  List[Dict]      # Investopedia definitions only
 
+# ------------------------------------------------------------------------------
+# RAG Service
+# ------------------------------------------------------------------------------
 class RAGService:
-    def __init__(self, db: Session = None):
-        # Initialize models and services
+    # --------------------------------------------------------------------------
+    # Init
+    # --------------------------------------------------------------------------
+    def __init__(self, db: Session | None = None):
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
-            # Try to load the environment again
             load_dotenv(find_dotenv())
             api_key = os.getenv("OPENAI_API_KEY")
             if not api_key:
-                raise ValueError("OpenAI API key not found in environment variables. Please check your .env file.")
-        
-        # Print API key info for debugging (masked)
-        print(f"Using OpenAI API key: {api_key[:5]}...{api_key[-5:]}")
-        
-        self.task_llm = ChatOpenAI(
-            model="gpt-4",
-            temperature=0,
-            api_key=api_key
-        )
+                raise ValueError("OPENAI_API_KEY missing")
+        print(f"Using OpenAI key: {api_key[:5]}…{api_key[-5:]}")
+
+        self.task_llm  = ChatOpenAI(model="gpt-4o-mini", temperature=0.0, api_key=api_key)
+        self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
+        # FinBERT sentiment
         self.finbert_tokenizer = AutoTokenizer.from_pretrained("ProsusAI/finbert")
-        self.finbert_model = AutoModelForSequenceClassification.from_pretrained("ProsusAI/finbert")
-        self.finbert_model.eval()
-        self.embeddings = OpenAIEmbeddings()
-        
-        # Initialize storage and services
+        self.finbert_model     = AutoModelForSequenceClassification.from_pretrained("ProsusAI/finbert").eval()
+
+        # DB/session & scrapers
         self.db = db or next(get_db())
-        self.news_service = NewsScraperService(self.db)
-        self.knowledge_service = FinancialKnowledgeService(self.db)
-        self.social_service = SocialMediaScraperService(self.db)
-        
-        # Set up the graph
+        self.news_service     = NewsScraperService(self.db)
+        self.knowledge_service= FinancialKnowledgeService(self.db)
+        self.social_service   = SocialMediaScraperService(self.db)
+
         self.graph = self._setup_graph()
 
-    async def update_news_database(self):
-        """Update all data sources"""
-        total_new_items = 0
-        
-        # Update each data source
-        news_count = await self.news_service.update_news_database()
-        terms_count = await self.knowledge_service.update_terms_database()
-        social_count = await self.social_service.update_posts_database()
-        
-        # Generate embeddings for all content
-        # News articles
-        for article in self.db.query(NewsArticle).filter(NewsArticle.embedding.is_(None)).all():
-            embedding = await self.embeddings.aembed_query(article.title + "\n" + article.content)
-            store_embedding(self.db, NewsArticle, article.id, embedding)
-        
-        # Social media posts
-        for post in self.db.query(SocialMediaPost).filter(SocialMediaPost.embedding.is_(None)).all():
-            embedding = await self.embeddings.aembed_query(post.content)
-            store_embedding(self.db, SocialMediaPost, post.id, embedding)
-        
-        # Financial terms
-        for term in self.db.query(FinancialTerm).filter(FinancialTerm.embedding.is_(None)).all():
-            embedding = await self.embeddings.aembed_query(term.term + "\n" + term.definition)
-            store_embedding(self.db, FinancialTerm, term.id, embedding)
-        
-        total_new_items = news_count + terms_count + social_count
-        return total_new_items
+    # --------------------------------------------------------------------------
+    # Helper – doc formatter
+    # --------------------------------------------------------------------------
+    @staticmethod
+    def _format_docs(docs: List[Dict]) -> str:
+        """Pretty-print retrieved docs so the LLM actually reads them."""
+        if not docs:
+            return "None"
+        out = []
+        for i, d in enumerate(docs, 1):
+            title   = d.get("title")   or d.get("term", "Untitled")
+            source  = d.get("source")  or d.get("platform", "Source?")   # InvestingCom, X, etc.
+            date    = d.get("date", "")
+            content = (d.get("content") or d.get("definition", ""))[:600]
+            out.append(f"[{i}] {title}\nSource: {source}  Date: {date}\n{content}\n")
+        return "\n".join(out)
 
+    # --------------------------------------------------------------------------
+    # Nodes
+    # --------------------------------------------------------------------------
     def _task_assignment_node(self, state: AgentState) -> AgentState:
-        """Node for task assignment using GPT-4o"""
-        prompt = ChatPromptTemplate.from_template("""
-        You are a financial task coordinator. Break down the user's question 
-        into specific analytical tasks. Focus on financial aspects that need to be analyzed.
-        
-        Question: {question}
-        
-        Break this down into 2-3 key tasks:
-        """)
-        
-        runnable = prompt | self.task_llm | StrOutputParser()
-        state["task_list"] = runnable.invoke({"question": state["question"]})
-        return state
-
-    # def _context_retrieval_node(self, state: AgentState) -> AgentState:
-    #     """Node for retrieving relevant context"""
-    #     # Get query embedding
-    #     query_embedding = self.embeddings.embed_query(state["question"])
-        
-    #     # Search each content type
-    #     news_results = search_by_embedding(self.db, NewsArticle, query_embedding)
-    #     social_results = search_by_embedding(self.db, SocialMediaPost, query_embedding)
-    #     term_results = search_by_embedding(self.db, FinancialTerm, query_embedding)
-
-    #     invpedia_results = search_by_embedding(self.db, InvestopediaDict, query_embedding)
-    #     invest_com_results = search_by_embedding(self.db, InvestingCom, query_embedding)
-
-    #     # DEBUG: log how many hits came from each table
-    #     logger.info(f"RAG retrieval counts — news: {len(news_results)}, social: {len(social_results)}, "
-    #                 f"terms: {len(term_results)}, investopedia: {len(invpedia_results)}, "
-    #                 f"investing_com: {len(invest_com_results)}")
-
-        
-    #     # Combine all results
-    #     # state["source_docs"] = news_results + social_results
-    #     # state["terms_data"] = term_results
-
-
-    #     state["source_docs"] = (
-    #         news_results
-    #         + social_results
-    #         + invest_com_results
-    #     )
-
-    #     state["terms_data"]  = invpedia_results
-
-    #     return state
-    
-    def _context_retrieval_node(self, state: AgentState) -> AgentState:
-        # Get query embedding
-        query_embedding = self.embeddings.embed_query(state["question"])
-        
-        print("🔍 InvestopediaDict total rows:", self.db.query(InvestopediaDict).count())
-        print("🔍 InvestopediaDict embedded rows:", self.db.query(InvestopediaDict).filter(InvestopediaDict.embedding.isnot(None)).count())
-
-        # Retrieve from each table
-        news_results       = search_by_embedding(self.db, NewsArticle,       query_embedding)
-        social_results     = search_by_embedding(self.db, SocialMediaPost,   query_embedding)
-        term_results       = search_by_embedding(self.db, FinancialTerm,     query_embedding)
-        invpedia_results   = search_by_embedding(self.db, InvestopediaDict,  query_embedding)
-        invest_com_results = search_by_embedding(self.db, InvestingCom,       query_embedding)
-
-        # DEBUG: how many per table
-        logger.info(
-            f"RAG retrieval counts — "
-            f"news: {len(news_results)}, social: {len(social_results)}, "
-            f"terms: {len(term_results)}, investopedia: {len(invpedia_results)}, "
-            f"investing_com: {len(invest_com_results)}"
+        prompt = ChatPromptTemplate.from_template(
+            "Break the financial question into 2-3 concise tasks.\n\nQuestion: {q}"
         )
+        state["task_list"] = (prompt | self.task_llm | StrOutputParser()).invoke({"q": state["question"]})
+        return state    
 
-        # Now include FinancialTerm under terms_data
-        state["terms_data"]  = term_results
-        
-        # …and everything else under source_docs
-        state["source_docs"] = (
-            news_results
-            + social_results
-            + invpedia_results
-            + invest_com_results
+    # ------------------------------------------------------------------
+    # helper – turn {id, url, similarity} into a rich dict  -------------
+    # ------------------------------------------------------------------
+    def _as_dict_investing(self, hit) -> Dict:
+        row = self.db.query(InvestingCom).get(hit["id"])
+        if not row:
+            return {}
+        return {
+            "title":   row.title,
+            "content": row.content,
+            "source":  "Investing.com",
+            "url":     row.url,
+            "date":    row.published,
+            "similarity": hit.get("similarity", 0.0)
+        }
+
+    def _as_dict_investopedia(self, hit) -> Dict:
+        row = self.db.query(InvestopediaDict).get(hit["id"])
+        if not row:
+            return {}
+        return {
+            "term":        row.title,              # e.g. “10-K: Definition…”
+            "definition":  row.content,            # your column is named content
+            "url":         row.url,
+            "similarity":  hit.get("similarity",0)
+        }
+
+    # ------------------------------------------------------------------
+    # CONTEXT RETRIEVAL  – hydrated & keyword-filtered  -----------------
+    # ------------------------------------------------------------------
+    def _context_retrieval_node(self, state: AgentState) -> AgentState:
+        q_emb  = self.embeddings.embed_query(state["question"])
+        kwords = [w.lower() for w in state["question"].split() if len(w) > 2]
+
+        # 1. vector search (limit enlarged a bit)
+        raw_news = search_by_embedding(self.db, InvestingCom,     q_emb, limit=25)
+        raw_defs = search_by_embedding(self.db, InvestopediaDict, q_emb, limit=25)
+
+        # 2. hydrate hits into full docs
+        news_docs = [self._as_dict_investing(hit)   for hit in raw_news]
+        def_docs  = [self._as_dict_investopedia(hit)for hit in raw_defs]
+
+        # 3. keyword filter (keep rows that mention ANY keyword)
+        def kw_filter(docs):
+            out = []
+            for d in docs:
+                blob = f"{d.get('title','')} {d.get('content','')} {d.get('definition','')}".lower()
+                if any(k in blob for k in kwords):
+                    out.append(d)
+            return out
+
+        state["source_docs"] = kw_filter(news_docs)
+        state["terms_data"]  = kw_filter(def_docs)
+
+        logger.info(
+            "Post-filter hits | news:%d  investopedia:%d",
+            len(state["source_docs"]), len(state["terms_data"])
         )
         return state
 
     async def _sentiment_analysis_node(self, state: AgentState) -> AgentState:
-        """Node for FinBERT analysis"""
-        sentiment_results = []
-        for doc in state["source_docs"]:
-            if "title" in doc:  # Only analyze news articles
-                sentiment = await self._run_finbert_analysis(doc["title"])
-                sentiment_results.append({
-                    "title": doc["title"],
-                    "sentiment": sentiment
-                })
-        
-        state["sentiment_analysis"] = sentiment_results
-        return state
+        results = []
+        for d in state["source_docs"]:
+            if d.get("title"):
+                sent = await self._run_finbert(d["title"])
+                results.append({"title": d["title"], "sentiment": sent})
+        state["sentiment_analysis"] = results
+        return state    
 
+    # ------------------------------------------------------------------
+    # RESPONSE GENERATION  – fallback if context empty
+    # ------------------------------------------------------------------
     def _response_generation_node(self, state: AgentState) -> AgentState:
-        """Node for generating the final response"""
+
+        # -------- 0. zero-context fallback  --------
+        if not state["source_docs"] and not state["terms_data"]:
+            prompt = ChatPromptTemplate.from_template("""
+You are a helpful financial assistant. Answer the question from your own knowledge.
+
+Question: {q}
+""")
+            state["final_response"] = (
+                prompt | self.task_llm | StrOutputParser()
+            ).invoke({"q": state["question"]})
+            return state
+
+        # -------- 1. build context blocks --------
+        docs_txt  = self._format_docs(state["source_docs"])
+        terms_txt = self._format_docs(state["terms_data"])
+
         prompt = ChatPromptTemplate.from_template("""
-        You are a financial analyst assistant. Use the provided context to answer the user's question.
-        
-        Question: {question}
-        
-        Tasks identified:
-        {task_list}
-        
-        Relevant financial terms:
-        {terms_data}
-        
-        Source documents:
-        {source_docs}
-        
-        Sentiment analysis:
-        {sentiment_analysis}
-        
-        Provide a comprehensive answer:
-        """)
-        
-        runnable = prompt | self.task_llm | StrOutputParser()
-        state["final_response"] = runnable.invoke(state)
+SYSTEM:
+Answer using the Context whenever it helps; cite facts with [n].
+If the Context is insufficient **you may add what you know**, clearly
+marking those sentences as "general knowledge".
+
+USER QUESTION:
+{q}
+
+=== Context: News & Social ===
+{docs}
+
+=== Context: Investopedia ===
+{terms}
+""")
+
+        # state["final_response"] = (
+        #     prompt | self.task_llm | StrOutputParser()
+        # ).invoke({
+        #     "q":     state["question"],
+        #     "docs":  docs_txt,
+        #     "terms": terms_txt
+        # })
+
+        # 1. Generate main answer
+        final_answer = (
+            prompt | self.task_llm | StrOutputParser()
+        ).invoke({
+            "q":     state["question"],
+            "docs":  docs_txt,
+            "terms": terms_txt
+        })
+
+        # 2. Detect which [n] were actually cited
+        cited_numbers = set()
+        import re
+        for match in re.findall(r'\[(\d+)\]', final_answer):
+            cited_numbers.add(int(match))
+
+        # 3. Build sources list only for cited docs
+        all_docs = state["source_docs"] + state["terms_data"]
+        numbered_sources = []
+        for idx, doc in enumerate(all_docs, 1):
+            if idx in cited_numbers:
+                title = doc.get("title") or doc.get("term", "Untitled")
+                url   = doc.get("url", "#")
+                numbered_sources.append(f"[{idx}] {title} ({url})")
+
+        sources_text = "\n\nSources:\n" + "\n".join(numbered_sources) if numbered_sources else ""
+
+        # 4. Combine answer + sources
+        state["final_response"] = final_answer.strip() + "\n\n" + sources_text.strip()
+
+
         return state
 
-    def _setup_graph(self) -> StateGraph:
-        # """Set up the processing graph"""
-        # workflow = StateGraph(AgentState)
-        
-        # # Add nodes
-        # workflow.add_node("task_assignment", self._task_assignment_node)
-        # workflow.add_node("context_retrieval", self._context_retrieval_node)
-        # workflow.add_node("sentiment_analysis", self._sentiment_analysis_node)
-        # workflow.add_node("response_generation", self._response_generation_node)
-        
-        # # Add edges
-        # workflow.add_edge("task_assignment", "context_retrieval")
-        # workflow.add_edge("context_retrieval", "sentiment_analysis")
-        # workflow.add_edge("sentiment_analysis", "response_generation")
-        # workflow.add_edge("response_generation", END)
-        
-        # # Set entry point
-        # workflow.set_entry_point("task_assignment")
-        
-        # return workflow
-    
-        # Set up the graph with unique node IDs
-        workflow = StateGraph(AgentState)
-
-        # Add nodes (node IDs must NOT match state keys)
-        workflow.add_node("assign_tasks",        self._task_assignment_node)
-        workflow.add_node("retrieve_context",    self._context_retrieval_node)
-        workflow.add_node("analyze_sentiment",   self._sentiment_analysis_node)
-        workflow.add_node("generate_response",   self._response_generation_node)
-
-        # Connect the flow
-        workflow.add_edge("assign_tasks",      "retrieve_context")
-        workflow.add_edge("retrieve_context",  "analyze_sentiment")
-        workflow.add_edge("analyze_sentiment", "generate_response")
-        workflow.add_edge("generate_response", END)
-
-        # Entry point
-        workflow.set_entry_point("assign_tasks")
-
-        return workflow
-
-    async def _run_finbert_analysis(self, text: str) -> str:
-        """Run FinBERT sentiment analysis"""
-        inputs = self.finbert_tokenizer(text, return_tensors="pt", padding=True, truncation=True)
+    # --------------------------------------------------------------------------
+    # Sentiment helper
+    # --------------------------------------------------------------------------
+    async def _run_finbert(self, text: str) -> str:
+        toks = self.finbert_tokenizer(text, return_tensors="pt", truncation=True)
         with torch.no_grad():
-            outputs = self.finbert_model(**inputs)
-            predictions = torch.nn.functional.softmax(outputs.logits, dim=-1)
-            
-        labels = ["negative", "neutral", "positive"]
-        sentiment = labels[predictions.argmax().item()]
-        confidence = predictions.max().item()
-        
-        return f"{sentiment} (confidence: {confidence:.2f})"
+            logits = self.finbert_model(**toks).logits
+            scores = torch.nn.functional.softmax(logits, dim=-1)[0]
+        label = ["negative", "neutral", "positive"][scores.argmax().item()]
+        return f"{label} ({scores.max().item():.2f})"
 
+    # --------------------------------------------------------------------------
+    # Graph assembly
+    # --------------------------------------------------------------------------
+    def _setup_graph(self) -> StateGraph:
+        g = StateGraph(AgentState)
+        g.add_node("task",      self._task_assignment_node)
+        g.add_node("retrieve",  self._context_retrieval_node)
+        g.add_node("sentiment", self._sentiment_analysis_node)
+        g.add_node("answer",    self._response_generation_node)
+
+        g.add_edge("task", "retrieve")
+        g.add_edge("retrieve", "sentiment")
+        g.add_edge("sentiment", "answer")
+        g.add_edge("answer", END)
+
+        g.set_entry_point("task")
+        return g
+
+    # --------------------------------------------------------------------------
+    # Public entry
+    # --------------------------------------------------------------------------
     async def process_question(self, question: str) -> str:
-        """Process a user question through the RAG pipeline"""
-        # Reset the graph to prevent state conflicts
-        # self.graph = self._setup_graph()
-        
-        # Initialize the state
         state = AgentState(
             question=question,
             task_list="",
-            context_data="",
             sentiment_analysis=[],
             final_response="",
             source_docs=[],
             terms_data=[]
         )
-        
-        # try:
-        #     final_state = await self.graph.arun(state)
-        #     return final_state["final_response"]
 
-        try:
-            # 1) Task assignment
-            state = self._task_assignment_node(state)
+        # run nodes sequentially (sync + async mixed)
+        state = self._task_assignment_node(state)
+        state = self._context_retrieval_node(state)
+        state = await self._sentiment_analysis_node(state)
+        state = self._response_generation_node(state)
 
-            # 2) Context retrieval
-            state = self._context_retrieval_node(state)
-
-            # 3) Sentiment analysis (async)
-            state = await self._sentiment_analysis_node(state)
-
-            # 4) Final response generation
-            state = self._response_generation_node(state)
-
-            return state["final_response"]
-
-        except Exception as e:
-            # Provide a more helpful error message
-            error_msg = f"Error processing question: {str(e)}"
-            print(error_msg)
-            return f"I'm sorry, I encountered an error while processing your question. Please try again with a different query related to finance. Error details: {str(e)[:100]}..."
+        return state["final_response"]
