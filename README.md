@@ -38,8 +38,9 @@ LANGSMITH_ENDPOINT=your_langsmith_endpoint
 LANGSMITH_API_KEY=your_langsmith_api_key
 LANGSMITH_PROJECT=your_langsmith_project
 
-# Twitter API Key 
-TWITTER_BEARER_TOKEN=your_twitter_bearer_token
+# Twitter Playwright Login 
+TWITTER_USERNAME=your_twitter_username
+TWITTER_PASSWORD=your_twitter_password
 
 # Reddit API Keys 
 REDDIT_CLIENT_ID=your_reddit_client_id
