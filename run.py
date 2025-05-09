@@ -45,8 +45,8 @@ def main():
         # Wait a bit for Streamlit to start
         time.sleep(2)
         
-        # Open browser tabs
-        webbrowser.open("http://localhost:8501")  # Streamlit UI
+        # Streamlit will open the browser automatically, so we don't need to do it here
+        # webbrowser.open("http://localhost:8501")  # Commented out to prevent double browser opening
         
         print("\n✅ Application started!")
         print("   Frontend: http://localhost:8501")
