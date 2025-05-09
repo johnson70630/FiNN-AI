@@ -3,6 +3,7 @@ import requests
 import re
 import sys
 import os
+import time
 
 # Add the project root to Python path when running directly
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -41,23 +42,40 @@ def call_backend(question: str, timeout: int = 60):
                 full_md += f"- {line}\n"
     return full_md
 
-# Check if API server is running
-def is_api_running():
-    """Check if the backend API is available"""
-    try:
-        response = requests.get(f"{BACKEND_URL}/")
-        return response.status_code == 200
-    except:
-        return False
+# Check if API server is running with retries
+def is_api_running(max_retries=3, retry_delay=1):
+    """Check if the backend API is available with retries"""
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(f"{BACKEND_URL}/", timeout=5)
+            if response.status_code == 200:
+                return True
+            time.sleep(retry_delay)
+        except:
+            if attempt < max_retries - 1:  # Don't sleep on the last attempt
+                time.sleep(retry_delay)
+    return False
+
+# Session state for connection status
+if "api_connected" not in st.session_state:
+    st.session_state.api_connected = False
+
+# Try to connect to API
+api_status = is_api_running(max_retries=5, retry_delay=1)
+st.session_state.api_connected = api_status
 
 # Display API status
-api_status = is_api_running()
-if not api_status:
-    st.warning("⚠️ The backend API is not running. Please start it with the command below in a terminal:")
-    st.code("python backend/main.py", language="bash")
+if not st.session_state.api_connected:
+    st.warning("⚠️ The backend API is not running or not responding. Please check:")
+    st.code("1. Ensure backend is running with 'python backend/main.py'")
+    st.code("2. Try refreshing this page (API may still be starting up)")
+    
+    # Add auto-refresh button
+    if st.button("🔄 Retry Connection"):
+        st.experimental_rerun()
     st.stop()
 else:
-    st.success("✅ Connected to Financial News AI backend")
+    st.success("✅ Connected to FiNN AI !!")
 
 # Session state for chat history
 if "history" not in st.session_state:

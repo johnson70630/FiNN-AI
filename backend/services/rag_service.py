@@ -11,11 +11,14 @@ Key fixes
 from __future__ import annotations
 
 import os, logging, torch
-from typing import List, Dict, TypedDict
+from typing import List, Dict, TypedDict, Annotated, Sequence
+from typing_extensions import TypedDict
 from dotenv import load_dotenv, find_dotenv
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from langgraph.graph import StateGraph, END
 from sqlalchemy.orm import Session
@@ -40,10 +43,11 @@ load_dotenv(find_dotenv())
 class AgentState(TypedDict):
     question: str
     task_list: str
+    context_data: str 
     sentiment_analysis: List[Dict]
     final_response: str
-    source_docs: List[Dict]      # News + social + InvestingCom
-    terms_data:  List[Dict]      # Investopedia definitions only
+    source_docs: List[Dict]      
+    terms_data:  List[Dict]     
 
 # ------------------------------------------------------------------------------
 # RAG Service
@@ -61,7 +65,7 @@ class RAGService:
                 raise ValueError("OPENAI_API_KEY missing")
         print(f"Using OpenAI key: {api_key[:5]}…{api_key[-5:]}")
 
-        self.task_llm  = ChatOpenAI(model="gpt-4o-mini", temperature=0.0, api_key=api_key)
+        self.task_llm  = ChatOpenAI(model="gpt-4o", temperature=0.0, api_key=api_key)
         self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
         # FinBERT sentiment
@@ -168,7 +172,30 @@ class RAGService:
         for d in state["source_docs"]:
             if d.get("title"):
                 sent = await self._run_finbert(d["title"])
-                results.append({"title": d["title"], "sentiment": sent})
+                # Add content sentiment if available
+                content_sentiment = ""
+                if d.get("content"):
+                    # Get first 100 chars for a summary
+                    content_snippet = d.get("content", "")[:100] + "..."
+                    content_sent = await self._run_finbert(content_snippet)
+                    content_sentiment = f"Content: {content_sent}"
+                
+                # Calculate market impact based on sentiment
+                impact = "neutral"
+                if "positive" in sent:
+                    impact = "potentially positive"
+                elif "negative" in sent:
+                    impact = "potentially negative"
+                
+                results.append({
+                    "title": d["title"], 
+                    "sentiment": sent,
+                    "content_sentiment": content_sentiment,
+                    "market_impact": impact,
+                    "source": d.get("source", "Unknown"),
+                    "date": d.get("date", "Unknown")
+                })
+        
         state["sentiment_analysis"] = results
         return state    
 
@@ -195,9 +222,17 @@ Question: {q}
 
         prompt = ChatPromptTemplate.from_template("""
 SYSTEM:
-Answer using the Context whenever it helps; cite facts with [n].
-If the Context is insufficient **you may add what you know**, clearly
-marking those sentences as "general knowledge".
+You are a financial advisor assistant who specializes in providing accurate, up-to-date information about financial markets, investments, and economic topics.
+
+GUIDELINES:
+1. Use the Context information whenever possible and cite sources with [n] notation.
+2. Include ONLY factual information from the provided context.
+3. When citing, use the exact number from the context (e.g., [1], [2]) at the end of sentences that use that information.
+4. If the Context is insufficient, you may supplement with your general knowledge but clearly mark these additions with "(general knowledge)".
+5. Prioritize recent news over older information.
+6. Provide balanced perspectives when there are conflicting viewpoints.
+7. For financial terms, use definitions from Investopedia when available.
+8. When explaining complex concepts, break them down into simple terms.
 
 USER QUESTION:
 {q}
@@ -208,14 +243,6 @@ USER QUESTION:
 === Context: Investopedia ===
 {terms}
 """)
-
-        # state["final_response"] = (
-        #     prompt | self.task_llm | StrOutputParser()
-        # ).invoke({
-        #     "q":     state["question"],
-        #     "docs":  docs_txt,
-        #     "terms": terms_txt
-        # })
 
         # 1. Generate main answer
         final_answer = (

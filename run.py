@@ -11,6 +11,15 @@ import sys
 import webbrowser
 import signal
 import threading
+import requests
+
+def is_api_ready():
+    """Check if the API is up and running"""
+    try:
+        response = requests.get("http://localhost:8000/")
+        return response.status_code == 200
+    except:
+        return False
 
 def main():
     print("=== FiNN-AI: Financial News AI ===")
@@ -29,8 +38,19 @@ def main():
         )
         processes.append(api_process)
         
-        # Wait for the API server to start
-        time.sleep(2)
+        # Wait for the API server to start with verification
+        max_attempts = 10
+        attempts = 0
+        while not is_api_ready() and attempts < max_attempts:
+            time.sleep(1)
+            attempts += 1
+            if attempts == max_attempts // 2:
+                print("   Waiting for API to be ready...")
+        
+        if not is_api_ready():
+            print("⚠️ Warning: API server did not respond in time. Frontend might need a refresh.")
+        else:
+            print("   API server is ready!")
         
         # Start the Streamlit frontend
         print("🚀 Starting frontend...")
