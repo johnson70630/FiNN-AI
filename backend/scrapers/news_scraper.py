@@ -6,7 +6,7 @@ import re
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright
 from sqlalchemy.orm import Session
-from ..database import NewsArticle
+from backend.core.database import NewsArticle
 from email.utils import parsedate_to_datetime
 import time
 import schedule

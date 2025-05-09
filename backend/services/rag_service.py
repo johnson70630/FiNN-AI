@@ -20,13 +20,13 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from langgraph.graph import StateGraph, END
 from sqlalchemy.orm import Session
 
-from ..database import (
+from backend.core.database import (
     get_db, NewsArticle, SocialMediaPost, FinancialTerm,
     InvestopediaDict, InvestingCom, store_embedding, search_by_embedding
 )
-from ..scrapers.news_scraper import NewsScraperService
-from ..scrapers.financial_knowledge import FinancialKnowledgeService
-from ..scrapers.social_media_scraper import SocialMediaScraperService
+from backend.scrapers.news_scraper import NewsScraperService
+from backend.scrapers.financial_knowledge import FinancialKnowledgeService
+from backend.scrapers.social_media_scraper import SocialMediaScraperService
 
 # ------------------------------------------------------------------------------
 # Logging / env
@@ -124,7 +124,7 @@ class RAGService:
         if not row:
             return {}
         return {
-            "term":        row.title,              # e.g. “10-K: Definition…”
+            "term":        row.title,              # e.g. "10-K: Definition…"
             "definition":  row.content,            # your column is named content
             "url":         row.url,
             "similarity":  hit.get("similarity",0)

@@ -6,10 +6,10 @@ import threading
 import time
 import schedule
 from sqlalchemy.orm import Session
-from ..database import get_db
-from ..scrapers.news_scraper import NewsScraperService
-from ..scrapers.social_media_scraper import SocialMediaScraperService
-from ..scrapers.financial_knowledge import FinancialKnowledgeService
+from backend.core.database import get_db
+from backend.scrapers.news_scraper import NewsScraperService
+from backend.scrapers.social_media_scraper import SocialMediaScraperService
+from backend.scrapers.financial_knowledge import FinancialKnowledgeService
 
 class ScraperCoordinator:
     def __init__(self, news_service=None, social_media_service=None, financial_knowledge_service=None, db=None):

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from ..database import get_db, NewsArticle, SocialMediaPost, FinancialTerm
+from backend.core.database import get_db, NewsArticle, SocialMediaPost, FinancialTerm
 
 # Explicitly load environment variables
 load_dotenv()

@@ -14,10 +14,10 @@ from fastapi.middleware.cors import CORSMiddleware
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Now import with absolute paths to ensure it works in all contexts
-from app.database import get_db, NewsArticle, SocialMediaPost, FinancialTerm
-from app.services.rag_service import RAGService
-from app.services.simple_query_service import SimpleQueryService
-from app.data_collection.scraper_service import DataCollectionService, ScraperCoordinator
+from backend.core.database import get_db, NewsArticle, SocialMediaPost, FinancialTerm
+from backend.services.rag_service import RAGService
+from backend.services.simple_query_service import SimpleQueryService
+from backend.scrapers.scraper_service import DataCollectionService, ScraperCoordinator
 from sqlalchemy import func
 
 # Configure logging

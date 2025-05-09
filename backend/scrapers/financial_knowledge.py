@@ -2,7 +2,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 import asyncio
 from sqlalchemy.orm import Session
-from ..database import FinancialTerm
+from backend.core.database import FinancialTerm
 import time
 import schedule
 import threading

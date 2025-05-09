@@ -50,95 +50,60 @@ REDDIT_USER_AGENT=your_reddit_user_agent
 
 ## Running the Project
 
-### Core Application
+### Quickstart (Recommended)
+
+The easiest way to run the entire application:
 
 ```bash
-python app/main.py
+python run.py
 ```
-This starts the web API server that provides endpoints for accessing news, social media posts, and financial terms.
 
-### Finance Data Tools
+This will:
+1. Start the backend API server
+2. Launch the Streamlit frontend
+3. Open the web interface in your browser
+4. Show logs from both components in a single terminal
 
-The `finance_data_tools.py` script is a comprehensive utility for collecting, viewing, and managing financial data:
+Press Ctrl+C to stop all services.
+
+### Alternative: Running Components Separately
+
+#### Backend API Server
 
 ```bash
-python finance_data_tools.py [command] [options]
+python backend/main.py
 ```
 
-Available commands:
-- `collect`: Collect new financial data (news, social media posts, financial terms)
-- `view`: View existing data in the database
-- `schedule`: Set up scheduled data collection
+This starts the FastAPI server that provides endpoints for accessing news, social media posts, and financial terms.
 
-Examples:
-```bash
-# Collect all data sources
-python finance_data_tools.py collect --all
-
-# Collect only news articles
-python finance_data_tools.py collect --news
-
-# View recent news articles
-python finance_data_tools.py view --news --limit 10
-
-# Set up hourly data collection
-python finance_data_tools.py schedule --interval 60
-```
-
-### API Query Client
-
-The `test_query.py` script provides an easy way to send queries to the main.py API server. This client tool connects to the backend API and displays the results:
+#### Frontend Application
 
 ```bash
-# Query the API (enclose question in quotes)
-python test_query.py "What are the latest trends in tech stocks?"
-
-# Ask about recent financial news
-python test_query.py "Tell me about recent cryptocurrency news"
-
-# Learn about financial terms
-python test_query.py "Explain what a bear market is"
+streamlit run frontend/app.py
 ```
 
-This client shows which service processed your query (either the RAG service or the fallback simple query service) and displays the answer. It's the recommended way to interact with your API.
-
-### Test Model and Interactive Chatbot
-
-The `test_model.py` script serves two purposes: testing the system components and providing an interactive chatbot interface:
-
-```bash
-# Run tests to verify setup
-pytest test_model.py
-
-# Start the interactive chatbot
-python test_model.py --chatbot
-```
-
-In chatbot mode, you can:
-- View database statistics with the 'stats' command
-- Ask questions about finance using natural language
-- Search for specific financial terms and news
-- Type 'help' for a list of available commands
+This launches the Streamlit user interface that connects to the backend API.
 
 ## Project Structure
 ```
 .
-├── app/
-│   ├── scrapers/           # Data collection modules
+├── run.py                # Main launcher script
+├── backend/              # Backend API and core functionality
+│   ├── main.py           # FastAPI entry point
+│   ├── core/             # Core modules
+│   │   ├── database.py   # Database connections and models
+│   │   └── models.py     # Data models
+│   ├── scrapers/         # Data collection modules
 │   │   ├── news_scraper.py           # News article collection
-│   │   ├── social_media_scraper.py   # Social media post collection
-│   │   └── financial_knowledge.py    # Financial terms collection
-│   ├── services/          # Core business logic
-│   │   ├── rag_service.py         # RAG implementation for Q&A
-│   │   └── simple_query_service.py # Fallback query service
-│   ├── data_collection/   # Scheduling and coordination
-│   ├── database.py        # Database configuration and models
-│   └── main.py           # Web API entry point
-├── data/                 # Data storage directory (SQLite database)
-├── finance_data_tools.py # Comprehensive CLI tool for data management
-├── test_model.py        # Testing and interactive chatbot
-├── test_query.py        # Client for querying the API
-├── simple_finance_query.py # Direct database query tool
+│   │   ├── social_media_scraper.py   # Social media collection
+│   │   ├── financial_knowledge.py    # Financial terms collection
+│   │   └── scraper_service.py        # Orchestration service
+│   └── services/         # Core business logic
+│       ├── rag_service.py           # RAG implementation for Q&A
+│       └── simple_query_service.py  # Fallback query service
+├── frontend/            # User interface
+│   └── app.py           # Streamlit frontend 
+├── data/                # Data storage directory (SQLite database)
 ├── requirements.txt     # Project dependencies
 └── README.md           # Project documentation
 ```
@@ -146,20 +111,13 @@ In chatbot mode, you can:
 ## Usage
 
 ### Data Collection
-1. Collect financial news articles, social media posts, and financial terms using the `finance_data_tools.py` script
-2. Data is stored in a SQLite database in the `data/` directory
-3. Set up automated collection schedule to keep data fresh
-
-### Interactive Chatbot
-1. Start the chatbot with `python test_model.py --chatbot`
-2. Use commands to browse and search the database:
-   - `stats`: Show database statistics
-   - `help`: Display available commands
-   - `search [query]`: Search all content for a specific query
-   - Ask natural language questions about finance
+The system will automatically collect data from various sources:
+- Financial news articles from major financial news websites
+- Social media posts from finance-related channels
+- Financial terminology and definitions
 
 ### Web API
-1. Start the API server with `python app/main.py`
+1. Start the API server with `python backend/main.py`
 2. Access the following endpoints:
    - `/news`: Get latest news articles
    - `/social`: Get social media posts
@@ -175,11 +133,6 @@ In chatbot mode, you can:
 - OpenAI API key is required for the RAG functionality
 - Twitter and Reddit API keys are needed for social media scraping
 
-### Data Collection Issues
-- If you encounter rate limiting with Twitter/Reddit APIs, wait and try again later
-- For news scrapers, check that the website structures haven't changed
-- Use `finance_data_tools.py view --stats` to verify data was collected
-
 ### RAG Service Errors
 - If the chatbot fails to provide meaningful answers, check that:
   - Your OpenAI API key is valid and has sufficient credits
@@ -187,17 +140,7 @@ In chatbot mode, you can:
   - The query is related to financial topics
 
 ### Detailed Logs
-- For detailed error messages, check the application logs
-- When using `test_model.py --chatbot`, errors will be displayed in the console
-
-## Current Database Status
-
-As of the latest update, the database contains:
-- **News Articles**: 185 articles from Finviz, Yahoo Finance, and CNBC
-- **Social Media Posts**: 108 posts from finance-related subreddits
-- **Financial Terms**: 70 financial terms from Investopedia
-
-This provides a robust foundation for financial analysis and research.
+- For detailed error messages, check the application logs in the terminal when running `run.py`
 
 ## License
 

@@ -5,7 +5,7 @@ import threading
 import schedule
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-from ..database import SocialMediaPost
+from backend.core.database import SocialMediaPost
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 import aiohttp
