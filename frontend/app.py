@@ -318,19 +318,64 @@ with col_main:
 
     # Chat title
     st.markdown("### 💬 Chat with FiNN AI")
+    
+    # Create a fixed-height container for chat history (prevents jumping)
+    chat_container = st.container()
+    chat_container.markdown("""
+    <style>
+    .chat-container {
+        height: 400px; 
+        overflow-y: auto;
+        border: 1px solid #e0e0e0;
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 20px;
+        background-color: #f9f9f9;
+    }
+    </style>
+    <div class="chat-container" id="chat-container">
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Display conversation history in a scrollable container
+    with chat_container:
+        for msg in st.session_state.history:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"], unsafe_allow_html=False)
 
-    # Display conversation history
-    for msg in st.session_state.history:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"], unsafe_allow_html=False)
-
-    # User input / new turn
+    # Custom CSS for chat UI to prevent movement
+    st.markdown("""
+    <style>
+    /* General chat styles */
+    .stChatFloatingInputContainer {
+        position: sticky !important;
+        bottom: 20px !important;
+        z-index: 999 !important;
+        background-color: white !important;
+        padding: 10px !important;
+        border-top: 1px solid #eee !important;
+    }
+    
+    /* Fix chat history container */
+    .chat-container {
+        margin-bottom: 70px !important; /* Make room for fixed input */
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # User input (fixed at bottom)
     if prompt := st.chat_input("Ask a financial question…"):
-        # Show + store user message
-        with st.chat_message("user"):
-            st.write(prompt)
+        # Add question to history first
         st.session_state.history.append({"role": "user", "content": prompt})
-
+        
+        # Rerun to display the updated history (this will automatically display the user's message)
+        st.experimental_rerun()
+        
+    # Check if we need to process a message
+    if st.session_state.history and len(st.session_state.history) % 2 == 1:
+        # There's a user message without an AI response - process it
+        prompt = st.session_state.history[-1]["content"]
+        
         # Spinner placeholder
         spinner_ph = st.empty()
         with spinner_ph.container():
@@ -345,10 +390,11 @@ with col_main:
 
         spinner_ph.empty()  # remove spinner
 
-        # Show + store assistant response
-        with st.chat_message("assistant"):
-            st.markdown(assistant_md, unsafe_allow_html=False)
+        # Store assistant response
         st.session_state.history.append({"role": "assistant", "content": assistant_md})
+        
+        # Force rerun to show the complete conversation
+        st.experimental_rerun()
 
 # Sidebar with market data
 with col_sidebar:
@@ -483,7 +529,18 @@ with col_sidebar:
             for article in news:
                 try:
                     with st.expander(f"{article['title']}", expanded=True):
-                        st.markdown(f"**Source:** {article['source']} • **Date:** {article['date']}")
+                        # Format date nicely
+                        try:
+                            # Try to parse the date string to a datetime object
+                            date_obj = datetime.fromisoformat(article['date'].replace('Z', '+00:00'))
+                            # Format date and time separately
+                            date_str = date_obj.strftime("%Y-%m-%d")
+                            time_str = date_obj.strftime("%H:%M")
+                            st.markdown(f"**Source:** {article['source']} • **Date:** {date_str} • **Time:** {time_str}")
+                        except:
+                            # Fallback if date parsing fails
+                            st.markdown(f"**Source:** {article['source']} • **Date:** {article['date']}")
+                            
                         st.markdown(article['content'])
                         st.markdown(f"[Read more]({article['url']})")
                 except Exception as e:
@@ -509,7 +566,17 @@ with col_sidebar:
         if posts:
             for post in posts:
                 try:
-                    with st.expander(f"{post['platform']} - {post['date']}", expanded=True):
+                    # Format date object and improve display
+                    try:
+                        date_obj = datetime.fromisoformat(post['date'].replace('Z', '+00:00'))
+                        date_str = date_obj.strftime("%Y-%m-%d")
+                        time_str = date_obj.strftime("%H:%M")
+                        header = f"{post['platform']} • Date: {date_str} • Time: {time_str}"
+                    except:
+                        # Fallback if date parsing fails
+                        header = f"{post['platform']} - {post['date']}"
+                        
+                    with st.expander(header, expanded=True):
                         st.markdown(post['content'])
                         if post.get('url'):
                             st.markdown(f"[View original post]({post['url']})")
