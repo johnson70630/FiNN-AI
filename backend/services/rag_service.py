@@ -65,7 +65,7 @@ class RAGService:
                 raise ValueError("OPENAI_API_KEY missing")
         print(f"Using OpenAI key: {api_key[:5]}…{api_key[-5:]}")
 
-        self.task_llm  = ChatOpenAI(model="gpt-4o", temperature=0.0, api_key=api_key)
+        self.task_llm  = ChatOpenAI(model="gpt-4o-mini", temperature=0.0, api_key=api_key)
         self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
         # FinBERT sentiment
