@@ -25,8 +25,14 @@ def call_backend(question: str, timeout: int = 60):
     """Make a query to the backend API and format the response"""
     r = requests.post(f"{BACKEND_URL}/query", json={"question": question}, timeout=timeout)
     r.raise_for_status()
-    answer = r.json()["answer"]
+    result = r.json()
+    
+    # Extract the answer and any additional information
+    answer = result["answer"]
+    service = result.get("service", "unknown")
+    chain_of_thought = result.get("chain_of_thought", [])
 
+    # Process answer for display
     if "\n\nSources:\n" in answer:
         body, src = answer.split("\n\nSources:\n", 1)
     else:
@@ -43,6 +49,15 @@ def call_backend(question: str, timeout: int = 60):
                 full_md += f"- [{num}] [{title}]({url})\n"
             else:
                 full_md += f"- {line}\n"
+    
+    # Add chain of thought if available
+    if chain_of_thought:
+        full_md += "\n\n---\n**🔄 Reasoning Process:**\n"
+        for step in chain_of_thought:
+            step_name = step.get("step", "Step")
+            step_output = step.get("output", "")
+            full_md += f"- **{step_name}**: {step_output}\n"
+    
     return full_md
 
 # Check if API server is running with retries

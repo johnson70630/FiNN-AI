@@ -16,9 +16,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 # Now import with absolute paths to ensure it works in all contexts
 from backend.core.database import get_db, NewsArticle, SocialMediaPost, FinancialTerm
 from backend.services.rag_service import RAGService
-from backend.services.simple_query_service import SimpleQueryService
 from backend.services.stock_service import StockService
 from backend.services.stock_analysis_service import StockAnalysisService
+from backend.services.chain_service import ChainService
 from backend.scrapers.scraper_service import DataCollectionService, ScraperCoordinator
 from sqlalchemy import func
 
@@ -206,19 +206,32 @@ async def query_data(query: Dict[str, str], db: Session = Depends(get_db)):
         if "question" not in query:
             raise HTTPException(status_code=400, detail="Question is required")
         
+        # Initialize chain service
+        chain_service = ChainService(db)
+        logger.info(f"Processing question with chain service: {query['question'][:50]}...")
+        
         try:
-            # First try using the RAG service
+            # Use the chain service to process the question
+            result = await chain_service.process_query(query["question"])
+            
+            # Check if response is well-structured
+            if isinstance(result, dict) and "answer" in result:
+                return {
+                    "answer": result["answer"],
+                    "service": "chain",
+                    "chain_of_thought": result.get("chain_of_thought", [])
+                }
+            else:
+                # If chain service returned a simple string
+                return {"answer": result, "service": "chain"}
+                
+        except Exception as chain_error:
+            # If chain service fails, fall back to RAG service
+            logger.warning(f"Chain service error: {str(chain_error)}. Falling back to RAG service.")
             logger.info(f"Processing question with RAG service: {query['question'][:50]}...")
             rag = RAGService(db)
             response = await rag.process_question(query["question"])
             return {"answer": response, "service": "rag"}
-        except Exception as rag_error:
-            # If RAG service fails, fall back to simple query service
-            logger.warning(f"RAG service error: {str(rag_error)}. Falling back to simple query service.")
-            logger.info(f"Processing question with simple query service: {query['question'][:50]}...")
-            simple_query = SimpleQueryService(db)
-            response = await simple_query.process_question(query["question"])
-            return {"answer": response, "service": "simple_query"}
         
     except Exception as e:
         logger.error(f"Error processing query: {str(e)}")
