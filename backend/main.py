@@ -15,8 +15,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 # Now import with absolute paths to ensure it works in all contexts
 from backend.core.database import get_db, NewsArticle, SocialMediaPost, FinancialTerm
-from backend.services.rag_service1 import RAGService
+from backend.services.rag_service import RAGService
 from backend.services.simple_query_service import SimpleQueryService
+from backend.services.stock_service import StockService
 from backend.scrapers.scraper_service import DataCollectionService, ScraperCoordinator
 from sqlalchemy import func
 
@@ -190,6 +191,28 @@ async def query_data(query: Dict[str, str], db: Session = Depends(get_db)):
         logger.error(f"Error processing query: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/stocks")
+async def get_stocks(symbols: str = "AAPL,MSFT,GOOGL,AMZN,META"):
+    """Get stock data for the specified symbols"""
+    try:
+        symbol_list = symbols.split(",")
+        # Limit to 5 symbols max to prevent abuse
+        symbol_list = symbol_list[:5]
+        stock_data = await StockService.get_multiple_stocks(symbol_list)
+        return stock_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/stock/{symbol}")
+async def get_stock(symbol: str, period: str = "1d", interval: str = "15m"):
+    """Get detailed stock data for a specific symbol"""
+    try:
+        stock_data = await StockService.get_stock_data(symbol, period, interval)
+        if "error" in stock_data:
+            raise HTTPException(status_code=404, detail=stock_data["error"])
+        return stock_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     # Run the FastAPI app directly with uvicorn
