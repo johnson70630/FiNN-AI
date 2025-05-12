@@ -1,5 +1,6 @@
 from backend.services.rag_service import RAGService
 from backend.services.stock_analysis_service import StockAnalysisService
+from backend.services.stock_impact_service import StockImpactService
 from sqlalchemy.orm import Session
 import re
 import logging
@@ -14,6 +15,7 @@ class ChainService:
         self.db = db
         self.rag_service = RAGService(db)
         self.stock_analyzer = StockAnalysisService(db)
+        self.stock_impact_service = StockImpactService(db)
         
     async def process_query(self, question: str) -> dict:
         """
@@ -36,6 +38,8 @@ class ChainService:
             answer, chain = await self._market_overview_chain(question)
         elif query_type == "investment_advice":
             answer, chain = await self._investment_advice_chain(question)
+        elif query_type == "news_impact":
+            answer, chain = await self._news_impact_chain(question)
         else:
             # Default to RAG for general questions
             answer = await self.rag_service.process_question(question)
@@ -67,6 +71,19 @@ class ChainService:
             if re.search(pattern, question_lower):
                 return "stock_analysis"
         
+        # Check for news impact patterns
+        news_impact_patterns = [
+            r"which (?:stocks|companies) (?:will be|are|might be) (?:affected|impacted)",
+            r"news impact",
+            r"impact (?:of|on) (?:stocks|the market)",
+            r"(?:how will|what's the impact of) (?:this|the|recent) news",
+            r"stocks affected by",
+            r"companies (?:impacted|affected) by"
+        ]
+        
+        if any(re.search(pattern, question_lower) for pattern in news_impact_patterns):
+            return "news_impact"
+            
         # Check for market overview patterns
         market_patterns = [
             r"market overview",
@@ -201,6 +218,54 @@ class ChainService:
         
         chain.append({"step": "Response Generation", "output": "Generated investment advice"})
         return answer, chain
+    
+    async def _news_impact_chain(self, question: str) -> tuple:
+        """Chain for analyzing news impact on stocks"""
+        chain = [
+            {"step": "Query Classification", "output": "News Impact Analysis Query"},
+            {"step": "Data Collection", "output": "Retrieving recent news articles and analyzing stock impacts"}
+        ]
+        
+        # Get recent news with stock impact analysis
+        impact_results = await self.stock_impact_service.analyze_recent_articles(limit=8)
+        
+        chain.append({"step": "Impact Analysis", "output": f"Analyzed {len(impact_results)} recent news articles for stock impacts"})
+        
+        if not impact_results:
+            return "I couldn't find any recent news articles with clear stock impacts. Please check back later for updates.", chain
+        
+        # Group articles by impacted stocks
+        stock_impacts = {}
+        for result in impact_results:
+            for ticker in result["impacted_stocks"]:
+                if ticker not in stock_impacts:
+                    stock_impacts[ticker] = []
+                stock_impacts[ticker].append({
+                    "title": result["title"],
+                    "date": result["date"],
+                    "source": result["source"],
+                    "impact_analysis": result["impact_analysis"]
+                })
+        
+        chain.append({"step": "Stock Grouping", "output": f"Found impacts on {len(stock_impacts)} stocks"})
+        
+        # Format the response
+        response = []
+        response.append("# Recent News Impact on Stocks\n")
+        
+        for ticker, articles in stock_impacts.items():
+            company_name = self.stock_impact_service.MAJOR_STOCKS.get(ticker, "Unknown Company")
+            response.append(f"## {company_name} ({ticker})")
+            
+            # Add articles impacting this stock
+            for article in articles:
+                date_str = article["date"].strftime("%Y-%m-%d") if hasattr(article["date"], "strftime") else str(article["date"])
+                response.append(f"* **{article['title']}** ({article['source']}, {date_str})")
+                response.append(f"  - {article['impact_analysis']}\n")
+        
+        # Join all parts with proper formatting
+        final_response = "\n".join(response)
+        return final_response, chain
     
     def _extract_stock_symbol(self, question: str) -> str:
         """Extract a stock symbol from the question"""

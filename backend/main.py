@@ -21,6 +21,7 @@ from backend.services.stock_analysis_service import StockAnalysisService
 from backend.services.chain_service import ChainService
 from backend.scrapers.scraper_service import DataCollectionService, ScraperCoordinator
 from backend.services.embedding_service import EmbeddingService
+from backend.services.stock_impact_service import StockImpactService
 from sqlalchemy import func
 
 # Configure logging
@@ -199,6 +200,24 @@ def get_news(limit: int = 10, db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Error fetching news: {str(e)}")
         return []
+
+@app.get("/news/impact")
+async def get_news_with_impact(limit: int = 10, db: Session = Depends(get_db)):
+    """Get recent news articles with stock impact analysis"""
+    try:
+        logger.info(f"Fetching {limit} recent news articles with stock impact analysis")
+        
+        # Initialize the stock impact service
+        impact_service = StockImpactService(db)
+        
+        # Analyze recent articles
+        impact_results = await impact_service.analyze_recent_articles(limit=limit)
+        
+        logger.info(f"Found {len(impact_results)} news articles with stock impacts")
+        return impact_results
+    except Exception as e:
+        logger.error(f"Error fetching news with stock impact: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/social")
 def get_social_posts(limit: int = 10, db: Session = Depends(get_db)):
