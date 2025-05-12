@@ -58,55 +58,147 @@ class NewsScraperService:
         return text.strip()
 
     async def fetch_yahoo_finance(self, session) -> list:
-        """Fetch news from Yahoo Finance RSS feeds"""
+        """Fetch news from Yahoo Finance RSS feeds with retry mechanism"""
         articles = []
         
         for rss_url in self.yahoo_rss_urls:
-            try:
-                async with session.get(rss_url, ssl=False) as response:
-                    if response.status != 200:
-                        print(f"Failed to fetch RSS feed {rss_url}: {response.status}")
-                        continue
-                        
-                    content = await response.text()
-                    articles.extend(self.parse_rss_items(content, "Yahoo Finance"))
+            max_retries = 3
+            retry_count = 0
+            retry_delay = 2  # Initial delay in seconds
+            
+            while retry_count <= max_retries:
+                try:
+                    # Add delay between requests to avoid rate limiting
+                    if retry_count > 0:
+                        await asyncio.sleep(retry_delay)
+                        print(f"Retrying {rss_url} (attempt {retry_count} of {max_retries})")
                     
-            except Exception as e:
-                print(f"Error fetching Yahoo Finance RSS {rss_url}: {e}")
+                    async with session.get(rss_url, ssl=False) as response:
+                        if response.status == 200:
+                            content = await response.text()
+                            articles.extend(self.parse_rss_items(content, "Yahoo Finance"))
+                            break  # Success, exit the retry loop
+                        elif response.status == 429:
+                            # Too many requests, increase retry delay and try again
+                            print(f"Rate limit hit for {rss_url} (429). Retrying after delay.")
+                            retry_count += 1
+                            retry_delay *= 2  # Exponential backoff
+                        else:
+                            print(f"Failed to fetch RSS feed {rss_url}: {response.status}")
+                            break  # Don't retry for non-429 errors
+                        
+                except Exception as e:
+                    print(f"Error fetching Yahoo Finance RSS {rss_url}: {e}")
+                    break  # Don't retry for exceptions
+                    
+            # Add a delay between different RSS URLs
+            await asyncio.sleep(1)
                 
         return articles
 
     async def fetch_cnbc_news(self, session) -> list:
-        """Fetch news from CNBC RSS feed"""
-        try:
-            async with session.get(self.cnbc_rss_url) as response:
-                if response.status == 200:
-                    content = await response.text()
-                    return self.parse_rss_items(content, "CNBC")
-        except Exception as e:
-            print(f"CNBC error: {e}")
+        """Fetch news from CNBC RSS feed with retry mechanism"""
+        max_retries = 3
+        retry_count = 0
+        retry_delay = 2  # Initial delay in seconds
+        
+        while retry_count <= max_retries:
+            try:
+                # Add delay between retries
+                if retry_count > 0:
+                    await asyncio.sleep(retry_delay)
+                    print(f"Retrying CNBC (attempt {retry_count} of {max_retries})")
+                
+                async with session.get(self.cnbc_rss_url, ssl=False) as response:
+                    if response.status == 200:
+                        content = await response.text()
+                        articles = self.parse_rss_items(content, "CNBC")
+                        print(f"Successfully fetched {len(articles)} articles from CNBC")
+                        return articles
+                    elif response.status == 429:
+                        # Too many requests, increase retry delay and try again
+                        print(f"Rate limit hit for CNBC (429). Retrying after delay.")
+                        retry_count += 1
+                        retry_delay *= 2  # Exponential backoff
+                    else:
+                        print(f"Failed to fetch CNBC RSS feed: {response.status}")
+                        break  # Don't retry for non-429 errors
+                    
+            except Exception as e:
+                print(f"Error fetching CNBC RSS: {e}")
+                break  # Don't retry for exceptions
+                
+        print("Failed to fetch news from CNBC after all retries")
         return []
 
     async def fetch_finviz_news(self, session) -> list:
-        """Fetch news from Finviz"""
-        try:
-            async with session.get(self.finviz_url) as response:
-                if response.status == 200:
-                    content = await response.text()
-                    return self.parse_finviz_items(content)
-        except Exception as e:
-            print(f"Finviz error: {e}")
+        """Fetch news from Finviz with retry mechanism"""
+        max_retries = 3
+        retry_count = 0
+        retry_delay = 2  # Initial delay in seconds
+        
+        while retry_count <= max_retries:
+            try:
+                # Add delay between retries
+                if retry_count > 0:
+                    await asyncio.sleep(retry_delay)
+                    print(f"Retrying Finviz (attempt {retry_count} of {max_retries})")
+                
+                async with session.get(self.finviz_url, ssl=False) as response:
+                    if response.status == 200:
+                        content = await response.text()
+                        articles = self.parse_finviz_items(content)
+                        print(f"Successfully fetched {len(articles)} articles from Finviz")
+                        return articles
+                    elif response.status == 429:
+                        # Too many requests, increase retry delay and try again
+                        print(f"Rate limit hit for Finviz (429). Retrying after delay.")
+                        retry_count += 1
+                        retry_delay *= 2  # Exponential backoff
+                    else:
+                        print(f"Failed to fetch Finviz news: {response.status}")
+                        break  # Don't retry for non-429 errors
+                    
+            except Exception as e:
+                print(f"Error fetching Finviz news: {e}")
+                break  # Don't retry for exceptions
+                
+        print("Failed to fetch news from Finviz after all retries")
         return []
 
     async def fetch_investing_com(self, session) -> list:
-        """Fetch news from Investing.com"""
-        try:
-            async with session.get(self.investing_com_url) as response:
-                if response.status == 200:
-                    content = await response.text()
-                    return self.parse_investing_com_items(content)
-        except Exception as e:
-            print(f"Investing.com error: {e}")
+        """Fetch news from Investing.com with retry mechanism"""
+        max_retries = 3
+        retry_count = 0
+        retry_delay = 2  # Initial delay in seconds
+        
+        while retry_count <= max_retries:
+            try:
+                # Add delay between retries
+                if retry_count > 0:
+                    await asyncio.sleep(retry_delay)
+                    print(f"Retrying Investing.com (attempt {retry_count} of {max_retries})")
+                
+                async with session.get(self.investing_com_url, ssl=False) as response:
+                    if response.status == 200:
+                        content = await response.text()
+                        articles = self.parse_investing_com_items(content)
+                        print(f"Successfully fetched {len(articles)} articles from Investing.com")
+                        return articles
+                    elif response.status == 429:
+                        # Too many requests, increase retry delay and try again
+                        print(f"Rate limit hit for Investing.com (429). Retrying after delay.")
+                        retry_count += 1
+                        retry_delay *= 2  # Exponential backoff
+                    else:
+                        print(f"Failed to fetch Investing.com news: {response.status}")
+                        break  # Don't retry for non-429 errors
+                    
+            except Exception as e:
+                print(f"Error fetching Investing.com news: {e}")
+                break  # Don't retry for exceptions
+                
+        print("Failed to fetch news from Investing.com after all retries")
         return []
 
     def parse_rss_items(self, content: str, source: str) -> list:
@@ -192,19 +284,18 @@ class NewsScraperService:
             pub_time = datetime.now()
             if a.previous_sibling:
                 time_text = str(a.previous_sibling).strip()
-                if time_text:
-                    if time_text.endswith("AM") or time_text.endswith("PM"):
-                        try:
-                            today = datetime.now()
-                            pub_time = datetime.strptime(f"{today.strftime('%Y-%m-%d')} {time_text}", "%Y-%m-%d %I:%M %p")
-                        except:
-                            pass
-                    else:
-                        try:
-                            year = datetime.now().year
-                            pub_time = datetime.strptime(f"{time_text} {year}", "%b-%d %Y")
-                        except:
-                            pass
+                if time_text.endswith("AM") or time_text.endswith("PM"):
+                    try:
+                        today = datetime.now()
+                        pub_time = datetime.strptime(f"{today.strftime('%Y-%m-%d')} {time_text}", "%Y-%m-%d %I:%M %p")
+                    except:
+                        pass
+                else:
+                    try:
+                        year = datetime.now().year
+                        pub_time = datetime.strptime(f"{time_text} {year}", "%b-%d %Y")
+                    except:
+                        pass
 
             items.append(NewsArticle(
                 title=title,
@@ -302,48 +393,55 @@ class NewsScraperService:
 
     async def fetch_all_news(self) -> list:
         """Fetch news from all sources"""
-        connector = aiohttp.TCPConnector(limit=5)  # Reduced connection limit
-        async with aiohttp.ClientSession(headers=self.headers, timeout=self.timeout, connector=connector) as session:
-            # Fetch from all sources
-            yahoo_task = asyncio.create_task(self.fetch_yahoo_finance(session))
-            cnbc_task = asyncio.create_task(self.fetch_cnbc_news(session))
-            finviz_task = asyncio.create_task(self.fetch_finviz_news(session))
-            investing_task = asyncio.create_task(self.fetch_investing_com(session))
-            
-            all_news = []
-            for task in [yahoo_task, cnbc_task, finviz_task, investing_task]:
-                try:
-                    articles = await task
-                    all_news.extend(articles)
-                except Exception as e:
-                    print(f"Error in news task: {e}")
-
-        # Process articles in smaller batches
-        batch_size = 5  # Process 5 articles at a time
-        processed_news = []
+        connector = aiohttp.TCPConnector(limit=3)  # Reduced connection limit even further
+        all_news = []
+        source_counts = {"CNBC": 0, "Finviz": 0, "Investing.com": 0}
         
-        async with async_playwright() as p:
-            for i in range(0, len(all_news), batch_size):
-                batch = all_news[i:i + batch_size]
-                tasks = []
-                for article in batch:
-                    task = asyncio.create_task(self.fetch_full_content(p, article.url))
-                    tasks.append((article, task))
+        # First fetch all articles from all sources
+        print("Starting news collection from reliable sources...")
+        async with aiohttp.ClientSession(headers=self.headers, timeout=self.timeout, connector=connector) as session:
+            # Skip Yahoo Finance as it's consistently rate-limiting our requests
+            print("Skipping Yahoo Finance due to rate limiting issues")
+            
+            # Fetch from remaining sources sequentially with delays
+            print("Fetching CNBC news...")
+            cnbc_articles = await self.fetch_cnbc_news(session)
+            source_counts["CNBC"] = len(cnbc_articles)
+            all_news.extend(cnbc_articles)
+            await asyncio.sleep(3)  # Add delay between sources
+            
+            print("Fetching Finviz news...")
+            finviz_articles = await self.fetch_finviz_news(session)
+            source_counts["Finviz"] = len(finviz_articles)
+            all_news.extend(finviz_articles)
+            await asyncio.sleep(3)  # Add delay between sources
+            
+            print("Fetching Investing.com news...")
+            investing_articles = await self.fetch_investing_com(session)
+            source_counts["Investing.com"] = len(investing_articles)
+            all_news.extend(investing_articles)
+        
+        print(f"Initial collection summary:")
+        for source, count in source_counts.items():
+            print(f"  - {source}: {count} articles")
+        print(f"Total articles collected: {len(all_news)}")
+        
+        # Don't attempt to fetch full content if we don't have any articles
+        if not all_news:
+            print("No articles collected, skipping content fetching")
+            return []
 
-                for article, task in tasks:
-                    try:
-                        content = await task
-                        if content:
-                            article.content = content
-                            processed_news.append(article)
-                    except Exception as e:
-                        print(f"Error processing article {article.url}: {e}")
-                        continue
+        # Skip full content fetching to improve reliability
+        print("Skipping full content fetching to ensure reliable news updates")
+        
+        # Ensure all articles have some content
+        for article in all_news:
+            if not article.content or len(article.content.strip()) < 20:
+                # Use title as content if no content is available
+                article.content = f"[Summary] {article.title}"
                 
-                # Add a small delay between batches to prevent overload
-                await asyncio.sleep(1)
-
-        return processed_news
+        print(f"Returning {len(all_news)} news articles with basic content")
+        return all_news
 
     def get_existing_urls(self) -> set:
         """Get URLs of existing articles"""
@@ -366,24 +464,46 @@ class NewsScraperService:
 
     async def update_news_database(self) -> int:
         """Update the news database by scraping all sources"""
-        # Get existing URLs
-        existing_urls = self.get_existing_urls()
-        
-        # Scrape new articles
-        new_articles = await self.fetch_all_news()
-        
-        # Filter out duplicates and add new articles
-        added_count = 0
-        for article in new_articles:
-            if article.url not in existing_urls:
-                self.db.add(article)
-                added_count += 1
-        
-        # Commit changes
-        if added_count > 0:
-            self.db.commit()
+        try:
+            # Get existing URLs
+            existing_urls = self.get_existing_urls()
+            print(f"Found {len(existing_urls)} existing news articles in database")
             
-        return added_count
+            # Scrape new articles
+            print("Fetching new articles from all sources...")
+            new_articles = await self.fetch_all_news()
+            print(f"Fetched {len(new_articles)} articles, checking for duplicates...")
+            
+            # Add articles individually with separate transactions for each
+            added_count = 0
+            for article in new_articles:
+                try:
+                    # Skip if article URL already exists
+                    if article.url in existing_urls:
+                        continue
+                        
+                    # Add and commit each article individually to avoid losing all on one error
+                    self.db.add(article)
+                    self.db.commit()
+                    
+                    # Update tracking
+                    existing_urls.add(article.url)
+                    added_count += 1
+                    print(f"Added new article: {article.title[:50]}...")
+                    
+                except Exception as item_error:
+                    # Roll back if there was an error with this article
+                    self.db.rollback()
+                    print(f"Error adding article {article.url}: {str(item_error)}")
+                    # Continue with next article
+            
+            print(f"Successfully added {added_count} new news articles to database")
+            return added_count
+            
+        except Exception as e:
+            print(f"Error in news database update: {str(e)}")
+            self.db.rollback()
+            return 0
 
     def hourly_update_job(self):
         """Run the update_news_database function in the event loop"""

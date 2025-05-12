@@ -10,6 +10,7 @@ from backend.core.database import get_db
 from backend.scrapers.news_scraper import NewsScraperService
 from backend.scrapers.social_media_scraper import SocialMediaScraperService
 from backend.scrapers.financial_knowledge import FinancialKnowledgeService
+from backend.services.embedding_service import EmbeddingService
 
 class ScraperCoordinator:
     def __init__(self, news_service=None, social_media_service=None, financial_knowledge_service=None, db=None):
@@ -24,38 +25,52 @@ class ScraperCoordinator:
         self.scheduler_thread = None
         self.interval_minutes = 60  # Default to hourly
     
-    async def run_all_scrapers(self):
-        """Run all scrapers simultaneously and return the results"""
+    async def run_all_scrapers(self, include_financial_terms=False):
+        """Run news and social media scrapers (and optionally financial terms) and return the results"""
+        # By default, only run news and social media scrapers for hourly updates
         tasks = [
             self.news_service.update_news_database(),
-            self.social_media_service.update_posts_database(),
-            self.financial_knowledge_service.update_terms_database()
+            self.social_media_service.update_posts_database()
         ]
         
+        # Only include financial terms if specifically requested
+        if include_financial_terms:
+            tasks.append(self.financial_knowledge_service.update_terms_database())
+        
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        return {
+        
+        # Build result dictionary
+        result_dict = {
             "news": results[0] if not isinstance(results[0], Exception) else 0,
-            "social": results[1] if not isinstance(results[1], Exception) else 0,
-            "knowledge": results[2] if not isinstance(results[2], Exception) else 0
+            "social": results[1] if not isinstance(results[1], Exception) else 0
         }
+        
+        # Add knowledge results if included
+        if include_financial_terms:
+            result_dict["knowledge"] = results[2] if not isinstance(results[2], Exception) else 0
+        else:
+            result_dict["knowledge"] = 0
+        
+        return result_dict
     
     def hourly_update_job(self):
-        """Run all scrapers in a new event loop"""
+        """Run news and social media scrapers in a new event loop (skip financial terms)"""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            results = loop.run_until_complete(self.run_all_scrapers())
+            # Pass False to skip financial terms (Investopedia) in hourly updates
+            results = loop.run_until_complete(self.run_all_scrapers(include_financial_terms=False))
             total = sum(results.values())
             print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Scheduled job completed. Added {total} new items:")
             print(f"  - News: {results['news']}")
             print(f"  - Social: {results['social']}")
-            print(f"  - Knowledge: {results['knowledge']}")
+            # Knowledge will be 0 since we excluded it
         except Exception as e:
             print(f"Error in scheduled job: {e}")
         finally:
             loop.close()
     
-    def start_scheduled_scraping(self, interval_minutes=60):
+    def start_scheduled_scraping(self, interval_minutes=60, run_immediately=True):
         """Start scheduled scraping with the specified interval"""
         if self.is_scheduled:
             print("Scheduled scraping is already running")
@@ -67,9 +82,12 @@ class ScraperCoordinator:
             # Schedule the job based on the specified interval
             schedule.every(interval_minutes).minutes.do(self.hourly_update_job)
             
-            # Run the job immediately
-            print(f"Running initial data collection...")
-            self.hourly_update_job()
+            # Run the job immediately if requested
+            if run_immediately:
+                print(f"Running initial data collection...")
+                self.hourly_update_job()
+            else:
+                print(f"Initial data collection skipped. First collection will occur in {interval_minutes} minutes.")
             
             while self.is_scheduled:
                 schedule.run_pending()
@@ -223,11 +241,55 @@ class DataCollectionService:
             
         return terms_count
     
-    async def update_all_data(self):
-        """Update all data sources and save to data directory"""
+    async def update_all_data(self, include_financial_terms=True):
+        """
+        Update data sources and save to data directory
+        
+        Args:
+            include_financial_terms: Whether to update financial terms (default: True)
+        """
+        # Scrape data from sources
         news_count = await self.update_news_data()
         social_count = await self.update_social_data()
-        terms_count = await self.update_terms_data()
+        
+        # Only update financial terms if requested
+        terms_count = 0
+        if include_financial_terms:
+            print("Updating financial terms (Investopedia data)...")
+            terms_count = await self.update_terms_data()
+        else:
+            print("Skipping financial terms update as requested")
+        
+        # Generate embeddings for new content
+        total_items = news_count + social_count + terms_count
+        if total_items > 0:
+            print(f"Generating embeddings for {total_items} new items...")
+            embedding_service = EmbeddingService(self.db)
+            
+            # First update new news articles
+            if news_count > 0:
+                # Get the most recent news_count articles as they're likely the newly added ones
+                recent_news = self.db.query(self.news_service.model_class).order_by(
+                    self.news_service.model_class.date.desc()
+                ).limit(news_count).all()
+                
+                for article in recent_news:
+                    embedding_service.update_new_item_embedding(article)
+            
+            # Update new social media posts
+            if social_count > 0 and hasattr(self, 'social_service') and self.social_service:
+                recent_posts = self.db.query(self.social_service.model_class).order_by(
+                    self.social_service.model_class.date.desc()
+                ).limit(social_count).all()
+                
+                for post in recent_posts:
+                    embedding_service.update_new_item_embedding(post)
+            
+            # Update new financial terms if they were updated
+            if terms_count > 0 and hasattr(self, 'knowledge_service') and self.knowledge_service:
+                # Since terms might not have a date field, we can't easily identify just the new ones
+                # Just update all terms that don't have embeddings
+                embedding_service.update_model_embeddings(self.knowledge_service.model_class)
         
         # Create a metadata file with update timestamp
         metadata = {

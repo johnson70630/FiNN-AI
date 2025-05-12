@@ -20,6 +20,7 @@ from backend.services.stock_service import StockService
 from backend.services.stock_analysis_service import StockAnalysisService
 from backend.services.chain_service import ChainService
 from backend.scrapers.scraper_service import DataCollectionService, ScraperCoordinator
+from backend.services.embedding_service import EmbeddingService
 from sqlalchemy import func
 
 # Configure logging
@@ -63,7 +64,23 @@ scraper_coordinator = None
 
 @app.on_event("startup")
 async def startup_event():
-    logger.info("Skipping scraper coordinator on startup (no scraping needed).")
+    """Initialize services when the FastAPI app starts"""
+    global scraper_coordinator
+    try:
+        # Get a database session
+        db = next(get_db())
+        
+        # Initialize the scraper coordinator
+        scraper_coordinator = ScraperCoordinator(db=db)
+        
+        # Start the hourly scraping with immediate data collection
+        # Note: Hourly updates only include news and social media (not financial terms)
+        logger.info("Starting hourly data collection service (news and social media only)...")
+        scraper_coordinator.start_scheduled_scraping(interval_minutes=60, run_immediately=True)
+        logger.info("Hourly data collection service started with immediate data collection")
+        
+    except Exception as e:
+        logger.error(f"Error starting scraping services: {str(e)}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -79,14 +96,41 @@ def read_root():
     return {"message": "Welcome to Finance News AI"}
 
 @app.post("/update-data")
-async def update_data(db: Session = Depends(get_db)):
-    """Update all data sources (news, social media, financial terms)"""
+async def update_data(include_financial_terms: bool = True, db: Session = Depends(get_db)):
+    """
+    Update data sources (news, social media, and optionally financial terms)
+    
+    Args:
+        include_financial_terms: Whether to update financial terms (default: True)
+    """
     try:
         # Use the dedicated data collection service instead of RAGService
         collector = DataCollectionService(db)
-        new_items = await collector.update_all_data()
-        return {"message": f"Added {new_items} new items and saved to data directory"}
+        new_items = await collector.update_all_data(include_financial_terms=include_financial_terms)
+        
+        sources_updated = "news, social media" + (", and financial terms" if include_financial_terms else "")
+        return {
+            "message": f"Added {new_items} new items from {sources_updated} and saved to data directory",
+            "financial_terms_included": include_financial_terms
+        }
     except Exception as e:
+        logger.error(f"Error updating data: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/update-embeddings")
+async def update_embeddings(db: Session = Depends(get_db)):
+    """Update embeddings for all database items that don't have them"""
+    try:
+        embedding_service = EmbeddingService(db)
+        results = embedding_service.update_all_embeddings()
+        
+        total_updated = sum(results.values())
+        return {
+            "message": f"Updated embeddings for {total_updated} items",
+            "details": results
+        }
+    except Exception as e:
+        logger.error(f"Error updating embeddings: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/scheduler/status")
