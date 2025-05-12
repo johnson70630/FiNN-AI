@@ -58,7 +58,8 @@ def main():
             [sys.executable, "-m", "streamlit", "run", "frontend/app.py", "--server.port=8501"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True
+            text=True,
+            shell=False
         )
         processes.append(streamlit_process)
         

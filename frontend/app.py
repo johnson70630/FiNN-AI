@@ -12,53 +12,21 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Configure page
-st.set_page_config(page_title="FiNN AI", layout="wide")
+st.set_page_config(page_title="FiNN AI", layout="wide", page_icon="📊")
 st.markdown("<style>#MainMenu,header,footer{visibility:hidden}</style>",
             unsafe_allow_html=True)
-st.markdown("<h1 style='text-align:center;color:#4a90e2'>🤖 FiNN AI</h1>",
+st.markdown("<h1 style='text-align:center;color:#4a90e2'>📊 FiNN AI - Market Analysis</h1>",
             unsafe_allow_html=True)
+
+st.markdown("""
+Welcome to FiNN AI, your financial news and market analysis platform. 
+This dashboard provides real-time stock analysis, latest financial news, and social media sentiment.
+
+Navigate to the **Chat** page to have conversations with FiNN AI about financial topics.
+""")
 
 # Backend API URL
 BACKEND_URL = "http://localhost:8000"
-
-def call_backend(question: str, timeout: int = 60):
-    """Make a query to the backend API and format the response"""
-    r = requests.post(f"{BACKEND_URL}/query", json={"question": question}, timeout=timeout)
-    r.raise_for_status()
-    result = r.json()
-    
-    # Extract the answer and any additional information
-    answer = result["answer"]
-    service = result.get("service", "unknown")
-    chain_of_thought = result.get("chain_of_thought", [])
-
-    # Process answer for display
-    if "\n\nSources:\n" in answer:
-        body, src = answer.split("\n\nSources:\n", 1)
-    else:
-        body, src = answer, ""
-
-    # Build neat markdown with sources directly appended
-    full_md = body.strip()
-    if src:
-        full_md += "\n\n---\n**📚 Sources:**\n"
-        for line in src.splitlines():
-            m = re.match(r"\s*\[(\d+)]\s+(.*?)\s+\((https?://.*?)\)\s*$", line)
-            if m:
-                num, title, url = m.groups()
-                full_md += f"- [{num}] [{title}]({url})\n"
-            else:
-                full_md += f"- {line}\n"
-    
-    # Add chain of thought if available
-    if chain_of_thought:
-        full_md += "\n\n---\n**🔄 Reasoning Process:**\n"
-        for step in chain_of_thought:
-            step_name = step.get("step", "Step")
-            step_output = step.get("output", "")
-            full_md += f"- **{step_name}**: {step_output}\n"
-    
-    return full_md
 
 # Check if API server is running with retries
 def is_api_running(max_retries=3, retry_delay=1):
@@ -166,7 +134,7 @@ else:
 # Create a layout with two columns: main content and sidebar
 col_main, col_sidebar = st.columns([2, 1.5])
 
-# Main chat area
+# Main stock analysis area
 with col_main:
     # Add a button for stock analysis
     st.markdown("### 📊 Stock Analysis")
@@ -308,103 +276,6 @@ with col_main:
                     
                 except Exception as e:
                     st.error(f"Error analyzing stock: {str(e)}")
-    
-    # Separator before chat
-    st.markdown("---")
-    
-    # Session state for chat history
-    if "history" not in st.session_state:
-        st.session_state.history = []
-
-    # Chat title
-    st.markdown("### 💬 Chat with FiNN AI")
-    
-    # Create a fixed-height container for chat history (prevents jumping)
-    chat_container = st.container()
-    # Apply the styling directly to the container
-    st.markdown("""
-    <style>
-    /* Chat container styling */
-    .stChatMessageContent {
-        border-radius: 8px !important;
-    }
-    
-    /* User message styling */
-    .stChatMessage[data-testid="user-message"] .stChatMessageContent {
-        background-color: #e6f2ff !important;
-    }
-    
-    /* Assistant message styling */
-    .stChatMessage[data-testid="assistant-message"] .stChatMessageContent {
-        background-color: #f5f5f5 !important;
-    }
-    
-    /* Custom height for chat area */
-    [data-testid="stVerticalBlock"] > div:has(.stChatMessage) {
-        max-height: 400px;
-        overflow-y: auto;
-        border: 1px solid #e0e0e0;
-        border-radius: 10px;
-        padding: 15px;
-        margin-bottom: 20px;
-        background-color: #f9f9f9;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # Display conversation history
-    with chat_container:
-        for msg in st.session_state.history:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"], unsafe_allow_html=False)
-
-    # Custom CSS for chat UI to prevent movement
-    st.markdown("""
-    <style>
-    /* General chat styles */
-    .stChatFloatingInputContainer {
-        position: sticky !important;
-        bottom: 20px !important;
-        z-index: 999 !important;
-        background-color: white !important;
-        padding: 10px !important;
-        border-top: 1px solid #eee !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # User input (fixed at bottom)
-    if prompt := st.chat_input("Ask a financial question…"):
-        # Add question to history first
-        st.session_state.history.append({"role": "user", "content": prompt})
-        
-        # Rerun to display the updated history (this will automatically display the user's message)
-        st.rerun()
-        
-    # Check if we need to process a message
-    if st.session_state.history and len(st.session_state.history) % 2 == 1:
-        # There's a user message without an AI response - process it
-        prompt = st.session_state.history[-1]["content"]
-        
-        # Spinner placeholder
-        spinner_ph = st.empty()
-        with spinner_ph.container():
-            with st.chat_message("assistant"):
-                st.write("FiNN AI is thinking…")
-
-        # Backend call
-        try:
-            assistant_md = call_backend(prompt, timeout=60)
-        except Exception as e:
-            assistant_md = f"❌ Error: {e}"
-
-        spinner_ph.empty()  # remove spinner
-
-        # Store assistant response
-        st.session_state.history.append({"role": "assistant", "content": assistant_md})
-        
-        # Force rerun to show the complete conversation
-        st.rerun()
 
 # Sidebar with market data
 with col_sidebar:
