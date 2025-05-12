@@ -4,13 +4,48 @@ from typing import Dict, List, Optional
 import logging
 import random
 import traceback
+import time
+import threading
+import functools
 
 logger = logging.getLogger(__name__)
+
+# Cache for stock data to reduce API calls
+STOCK_CACHE = {}
+CACHE_DURATION = 300  # Cache duration in seconds (5 minutes)
+CACHE_LOCK = threading.RLock()  # Lock for thread-safe cache access
+
+def timed_cache(seconds=CACHE_DURATION):
+    """Decorator to cache function results for a specified duration"""
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            key = str(args) + str(kwargs)
+            
+            with CACHE_LOCK:
+                # Check if result is in cache and still valid
+                if key in STOCK_CACHE:
+                    timestamp, result = STOCK_CACHE[key]
+                    if datetime.now().timestamp() - timestamp < seconds:
+                        logger.info(f"Using cached result for {key}")
+                        return result
+            
+            # Get fresh result
+            result = await func(*args, **kwargs)
+            
+            # Store in cache
+            with CACHE_LOCK:
+                STOCK_CACHE[key] = (datetime.now().timestamp(), result)
+            
+            return result
+        return wrapper
+    return decorator
 
 class StockService:
     """Service for retrieving stock price data using yfinance"""
     
     @staticmethod
+    @timed_cache(seconds=300)
     async def get_stock_data(symbol: str, period: str = "1d", interval: str = "15m") -> Dict:
         """
         Get stock data for a specific symbol
@@ -24,9 +59,21 @@ class StockService:
             Dict containing stock data
         """
         logger.info(f"Fetching stock data for {symbol} with period={period}, interval={interval}")
+        start_time = time.time()
+        
         try:
+            # Use a timeout for yfinance operations
             ticker = yf.Ticker(symbol)
             logger.info(f"Successfully created yfinance ticker for {symbol}")
+            
+            # Limit the amount of data we get based on period
+            max_points = 30
+            if '1d' in period:
+                max_points = 20
+            elif '5d' in period:
+                max_points = 30
+            elif 'mo' in period:
+                max_points = 40
             
             hist = ticker.history(period=period, interval=interval)
             logger.info(f"Got history for {symbol} with {len(hist)} data points")
@@ -36,10 +83,12 @@ class StockService:
                 logger.warning(f"No data returned for {symbol}, falling back to mock data")
                 return StockService._generate_mock_data(symbol, period, interval)
             
-            # Format the data
+            # Format the data - limit the number of points for performance
             data_points = []
             try:
-                for index, row in hist.iterrows():
+                # Only take the most recent points up to max_points
+                recent_hist = hist.tail(max_points)
+                for index, row in recent_hist.iterrows():
                     data_points.append({
                         "timestamp": index.isoformat(),
                         "open": float(row["Open"]),
@@ -54,11 +103,11 @@ class StockService:
                 logger.error(traceback.format_exc())
                 return StockService._generate_mock_data(symbol, period, interval)
             
-            # Get additional info
+            # Get basic company info - minimal info to improve performance
             try:
-                info = ticker.info
-                company_name = info.get("shortName", symbol)
+                company_name = ticker.info.get("shortName", symbol)
                 current_price = data_points[-1]["close"] if data_points else None
+                currency = ticker.info.get("currency", "USD")
                 logger.info(f"Got company info for {symbol}: {company_name}")
             except Exception as info_err:
                 logger.error(f"Error getting company info for {symbol}: {str(info_err)}")
@@ -66,21 +115,27 @@ class StockService:
                 # Use fallback values
                 company_name = symbol
                 current_price = data_points[-1]["close"] if data_points else None
+                currency = "USD"
+            
+            elapsed = time.time() - start_time
+            logger.info(f"Stock data fetched for {symbol} in {elapsed:.2f} seconds")
             
             return {
                 "symbol": symbol,
                 "company_name": company_name,
                 "current_price": current_price,
-                "currency": "USD",  # Default fallback
+                "currency": currency,
                 "data": data_points
             }
         except Exception as e:
-            logger.error(f"Failed to get ticker '{symbol}' reason: {str(e)}")
+            elapsed = time.time() - start_time
+            logger.error(f"Failed to get ticker '{symbol}' in {elapsed:.2f}s, reason: {str(e)}")
             logger.error(traceback.format_exc())
             # If API fails, return mock data for demo purposes
             return StockService._generate_mock_data(symbol, period, interval)
     
     @staticmethod
+    @timed_cache(seconds=300)
     async def get_multiple_stocks(symbols: List[str]) -> List[Dict]:
         """
         Get stock data for multiple symbols
@@ -92,33 +147,91 @@ class StockService:
             List of dictionaries containing stock data
         """
         logger.info(f"Fetching data for multiple stocks: {symbols}")
+        start_time = time.time()
         results = []
-        for symbol in symbols:
-            try:
-                data = await StockService.get_stock_data(symbol)
-                # Only include key information for multiple stocks
-                if "error" not in data:
-                    results.append({
-                        "symbol": data["symbol"],
-                        "company_name": data["company_name"],
-                        "current_price": data["current_price"],
-                        "currency": data.get("currency", "USD")
-                    })
-                else:
-                    results.append({"symbol": symbol, "error": data["error"]})
-            except Exception as e:
-                logger.error(f"Error processing symbol {symbol}: {str(e)}")
-                logger.error(traceback.format_exc())
-                # Include fallback data
-                results.append({
-                    "symbol": symbol,
-                    "company_name": f"{symbol} Inc.",
-                    "current_price": 100.0,  # Placeholder value
-                    "currency": "USD",
-                    "note": "Error fetching data, using placeholder"
-                })
         
-        logger.info(f"Returning data for {len(results)} symbols")
+        # Limit to 5 stocks maximum for performance
+        symbols = symbols[:5]
+        
+        # Batch processing to improve performance
+        try:
+            # Create a simple batch request using yfinance Tickers
+            tickers = yf.Tickers(' '.join(symbols))
+            logger.info(f"Created Tickers object for {symbols}")
+            
+            # Process each symbol
+            for symbol in symbols:
+                try:
+                    # First try to get from the batch
+                    ticker = tickers.tickers[symbol]
+                    hist = ticker.history(period="1d")
+                    
+                    if hist.empty:
+                        # Fall back to individual request if batch fails
+                        logger.warning(f"No batch data for {symbol}, falling back to individual request")
+                        data = await StockService.get_stock_data(symbol)
+                    else:
+                        # Extract just what we need from the batch data
+                        company_name = ticker.info.get("shortName", symbol)
+                        current_price = float(hist["Close"].iloc[-1]) if not hist.empty else None
+                        currency = ticker.info.get("currency", "USD")
+                        
+                        data = {
+                            "symbol": symbol,
+                            "company_name": company_name,
+                            "current_price": current_price,
+                            "currency": currency
+                        }
+                    
+                    # Only include key information for multiple stocks
+                    if "error" not in data:
+                        results.append({
+                            "symbol": data["symbol"],
+                            "company_name": data["company_name"],
+                            "current_price": data["current_price"],
+                            "currency": data.get("currency", "USD")
+                        })
+                    else:
+                        results.append({"symbol": symbol, "error": data["error"]})
+                        
+                except Exception as e:
+                    logger.error(f"Error processing symbol {symbol}: {str(e)}")
+                    logger.error(traceback.format_exc())
+                    # Include fallback data
+                    results.append({
+                        "symbol": symbol,
+                        "company_name": f"{symbol} Inc.",
+                        "current_price": 100.0,  # Placeholder value
+                        "currency": "USD",
+                        "note": "Error fetching data, using placeholder"
+                    })
+        except Exception as batch_error:
+            logger.error(f"Batch processing failed: {str(batch_error)}")
+            # Fall back to individual requests
+            for symbol in symbols:
+                try:
+                    data = await StockService.get_stock_data(symbol)
+                    if "error" not in data:
+                        results.append({
+                            "symbol": data["symbol"],
+                            "company_name": data["company_name"],
+                            "current_price": data["current_price"],
+                            "currency": data.get("currency", "USD")
+                        })
+                    else:
+                        results.append({"symbol": symbol, "error": data["error"]})
+                except Exception as e:
+                    logger.error(f"Error processing symbol {symbol}: {str(e)}")
+                    results.append({
+                        "symbol": symbol,
+                        "company_name": f"{symbol} Inc.",
+                        "current_price": 100.0,
+                        "currency": "USD",
+                        "note": "Error fetching data, using placeholder"
+                    })
+        
+        elapsed = time.time() - start_time
+        logger.info(f"Returning data for {len(results)} symbols in {elapsed:.2f} seconds")
         return results
     
     @staticmethod

@@ -7,7 +7,6 @@ import time
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-import random
 
 # Add the project root to Python path when running directly
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -64,9 +63,10 @@ def is_api_running(max_retries=3, retry_delay=1):
 def get_recent_news(limit=5):
     """Get recent news articles from the backend API"""
     try:
-        response = requests.get(f"{BACKEND_URL}/news?limit={limit}", timeout=5)
+        response = requests.get(f"{BACKEND_URL}/news?limit={limit}", timeout=10)
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        return data
     except Exception as e:
         st.error(f"Error fetching news: {str(e)}")
         return []
@@ -75,123 +75,57 @@ def get_recent_news(limit=5):
 def get_recent_social_posts(limit=5):
     """Get recent social media posts from the backend API"""
     try:
-        response = requests.get(f"{BACKEND_URL}/social?limit={limit}", timeout=5)
+        response = requests.get(f"{BACKEND_URL}/social?limit={limit}", timeout=10)
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        return data
     except Exception as e:
         st.error(f"Error fetching social media posts: {str(e)}")
         return []
 
 # Get stock prices from the backend API
-def get_stock_prices(symbols="AAPL,MSFT,GOOGL,AMZN,META"):
-    """Get stock prices from the backend API"""
-    try:
-        response = requests.get(f"{BACKEND_URL}/stocks?symbols={symbols}", timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        return data
-    except Exception as e:
-        st.error(f"Error fetching stock prices: {str(e)}")
-        # Return mock data as fallback
-        return generate_mock_stocks(symbols.split(","))
+def get_stock_prices(symbols="AAPL,MSFT,GOOGL,AMZN,META", retries=3, timeout=20):
+    """Get stock prices from the backend API with retries"""
+    for attempt in range(retries):
+        try:
+            with st.spinner(f"Loading stock data (attempt {attempt+1}/{retries})..."):
+                response = requests.get(f"{BACKEND_URL}/stocks?symbols={symbols}", timeout=timeout)
+                response.raise_for_status()
+                data = response.json()
+                return data
+        except requests.exceptions.Timeout:
+            if attempt < retries - 1:
+                st.warning(f"Stock data request timed out. Retrying {attempt+1}/{retries}...")
+                time.sleep(1)  # Wait a bit before retrying
+            else:
+                st.error(f"Error fetching stock prices: Timeout after {retries} attempts")
+                return []
+        except Exception as e:
+            st.error(f"Error fetching stock prices: {str(e)}")
+            return []
 
 # Get detailed stock data for a specific symbol
-def get_stock_details(symbol, period="1d", interval="15m"):
-    """Get detailed stock data for a specific symbol"""
-    try:
-        response = requests.get(f"{BACKEND_URL}/stock/{symbol}?period={period}&interval={interval}", timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        st.error(f"Error fetching stock details: {str(e)}")
-        # Return mock data as fallback
-        return generate_mock_stock_details(symbol, period, interval)
-
-# Generate mock stock data for frontend fallback
-def generate_mock_stocks(symbols):
-    """Generate mock stock data when API is unavailable"""
-    mock_data = []
-    company_names = {
-        "AAPL": "Apple Inc.",
-        "MSFT": "Microsoft Corporation",
-        "GOOGL": "Alphabet Inc.",
-        "AMZN": "Amazon.com, Inc.",
-        "META": "Meta Platforms, Inc."
-    }
-    
-    for symbol in symbols:
-        # Generate a stable price based on the symbol
-        base_price = sum(ord(c) for c in symbol) % 1000
-        if base_price < 50:
-            base_price += 50
-            
-        mock_data.append({
-            "symbol": symbol,
-            "company_name": company_names.get(symbol, f"{symbol} Inc."),
-            "current_price": base_price + (random.random() - 0.5) * 10,
-            "currency": "USD",
-            "note": "Frontend mock data"
-        })
-    
-    return mock_data
-
-# Generate mock stock details for frontend fallback
-def generate_mock_stock_details(symbol, period="1d", interval="15m"):
-    """Generate mock stock details when API is unavailable"""
-    # Generate a stable price based on the symbol
-    base_price = sum(ord(c) for c in symbol) % 1000
-    if base_price < 50:
-        base_price += 50
-        
-    # Company name mapping for common symbols
-    company_names = {
-        "AAPL": "Apple Inc.",
-        "MSFT": "Microsoft Corporation",
-        "GOOGL": "Alphabet Inc.",
-        "AMZN": "Amazon.com, Inc.",
-        "META": "Meta Platforms, Inc."
-    }
-    
-    # Generate mock data points
-    now = datetime.now()
-    data_points = []
-    
-    # Determine number of points based on period and interval
-    num_points = 20  # Default
-    if period == "1d" and interval == "15m":
-        num_points = 20
-    elif period == "5d":
-        num_points = 30
-    elif "mo" in period:
-        num_points = 40
-    elif "y" in period:
-        num_points = 50
-    
-    # Generate price movements
-    for i in range(num_points):
-        point_time = now - timedelta(hours=num_points-i)
-        price_change = (random.random() - 0.5) * base_price * 0.02
-        price = base_price * (1 + (i - num_points//2) * 0.001) + price_change
-        
-        data_points.append({
-            "timestamp": point_time.isoformat(),
-            "open": price - random.random() * 2,
-            "high": price + random.random() * 3,
-            "low": price - random.random() * 3,
-            "close": price,
-            "volume": int(random.random() * 1000000)
-        })
-        
-    current_price = data_points[-1]["close"] if data_points else base_price
-    
-    return {
-        "symbol": symbol,
-        "company_name": company_names.get(symbol, f"{symbol} Inc."),
-        "current_price": current_price,
-        "currency": "USD",
-        "data": data_points,
-        "note": "Frontend mock data (API unavailable)"
-    }
+def get_stock_details(symbol, period="1d", interval="15m", retries=2, timeout=20):
+    """Get detailed stock data for a specific symbol with retries"""
+    for attempt in range(retries):
+        try:
+            with st.spinner(f"Loading chart data (attempt {attempt+1}/{retries})..."):
+                response = requests.get(
+                    f"{BACKEND_URL}/stock/{symbol}?period={period}&interval={interval}", 
+                    timeout=timeout
+                )
+                response.raise_for_status()
+                return response.json()
+        except requests.exceptions.Timeout:
+            if attempt < retries - 1:
+                st.warning(f"Chart data request timed out. Retrying {attempt+1}/{retries}...")
+                time.sleep(1)  # Wait a bit before retrying
+            else:
+                st.error(f"Error fetching stock details: Timeout after {retries} attempts")
+                return None
+        except Exception as e:
+            st.error(f"Error fetching stock details: {str(e)}")
+            return None
 
 # Session state for connection status
 if "api_connected" not in st.session_state:
@@ -270,15 +204,11 @@ with col_sidebar:
         with col1:
             user_symbols = st.text_input("Enter stock symbols (comma-separated)", value=default_symbols)
         with col2:
-            refresh_stocks = st.button("🔄 Refresh", key="refresh_stocks")
+            if st.button("🔄 Refresh", key="refresh_stocks"):
+                st.experimental_rerun()
         
         # Fetch stock data
         stock_data = get_stock_prices(user_symbols)
-        
-        # Show mock data message if needed
-        using_mock = any('note' in stock and 'mock' in stock.get('note', '').lower() for stock in stock_data)
-        if using_mock:
-            st.info("⚠️ Using demo data - real-time stock API is unavailable")
         
         if stock_data:
             # Create a DataFrame
@@ -310,69 +240,63 @@ with col_sidebar:
                     period = st.selectbox("Select time period", ["1d", "5d", "1mo", "3mo", "6mo", "1y"])
                     
                     if selected_symbol:
-                        with st.spinner("Loading chart data..."):
-                            stock_details = get_stock_details(selected_symbol, period=period)
-                            
-                            if stock_details and "data" in stock_details:
-                                # Check if we're using mock data
-                                is_mock = 'note' in stock_details and 'mock' in stock_details.get('note', '').lower()
-                                if is_mock:
-                                    st.info(f"⚠️ Showing demo data for {selected_symbol}")
-                                    
-                                # Create Plotly chart
-                                df_detail = pd.DataFrame(stock_details["data"])
-                                if not df_detail.empty:
-                                    df_detail["timestamp"] = pd.to_datetime(df_detail["timestamp"])
-                                    
-                                    fig = go.Figure()
-                                    fig.add_trace(go.Scatter(
-                                        x=df_detail["timestamp"],
-                                        y=df_detail["close"],
-                                        mode='lines',
-                                        name='Close Price',
-                                        line=dict(color='#4a90e2')
-                                    ))
-                                    
-                                    # Add high/low range as a filled area
-                                    fig.add_trace(go.Scatter(
-                                        x=df_detail["timestamp"],
-                                        y=df_detail["high"],
-                                        mode='lines',
-                                        line=dict(width=0),
-                                        showlegend=False
-                                    ))
-                                    fig.add_trace(go.Scatter(
-                                        x=df_detail["timestamp"],
-                                        y=df_detail["low"],
-                                        mode='lines',
-                                        line=dict(width=0),
-                                        fill='tonexty',
-                                        fillcolor='rgba(74, 144, 226, 0.1)',
-                                        showlegend=False
-                                    ))
-                                    
-                                    fig.update_layout(
-                                        title=f"{stock_details['company_name']} ({stock_details['symbol']})",
-                                        xaxis_title="Date",
-                                        yaxis_title=f"Price ({stock_details.get('currency', 'USD')})",
-                                        height=400,
-                                        margin=dict(l=10, r=10, t=40, b=10)
-                                    )
-                                    
-                                    st.plotly_chart(fig, use_container_width=True)
-                                    
-                                    # Show latest price statistics
-                                    latest = df_detail.iloc[-1] if not df_detail.empty else None
-                                    if latest is not None:
-                                        stats_cols = st.columns(4)
-                                        stats_cols[0].metric("Open", f"${latest['open']:.2f}")
-                                        stats_cols[1].metric("High", f"${latest['high']:.2f}")
-                                        stats_cols[2].metric("Low", f"${latest['low']:.2f}")
-                                        stats_cols[3].metric("Close", f"${latest['close']:.2f}")
-                                else:
-                                    st.warning(f"No data points available for {selected_symbol}")
+                        stock_details = get_stock_details(selected_symbol, period=period)
+                        
+                        if stock_details and "data" in stock_details:
+                            # Create Plotly chart
+                            df_detail = pd.DataFrame(stock_details["data"])
+                            if not df_detail.empty:
+                                df_detail["timestamp"] = pd.to_datetime(df_detail["timestamp"])
+                                
+                                fig = go.Figure()
+                                fig.add_trace(go.Scatter(
+                                    x=df_detail["timestamp"],
+                                    y=df_detail["close"],
+                                    mode='lines',
+                                    name='Close Price',
+                                    line=dict(color='#4a90e2')
+                                ))
+                                
+                                # Add high/low range as a filled area
+                                fig.add_trace(go.Scatter(
+                                    x=df_detail["timestamp"],
+                                    y=df_detail["high"],
+                                    mode='lines',
+                                    line=dict(width=0),
+                                    showlegend=False
+                                ))
+                                fig.add_trace(go.Scatter(
+                                    x=df_detail["timestamp"],
+                                    y=df_detail["low"],
+                                    mode='lines',
+                                    line=dict(width=0),
+                                    fill='tonexty',
+                                    fillcolor='rgba(74, 144, 226, 0.1)',
+                                    showlegend=False
+                                ))
+                                
+                                fig.update_layout(
+                                    title=f"{stock_details['company_name']} ({stock_details['symbol']})",
+                                    xaxis_title="Date",
+                                    yaxis_title=f"Price ({stock_details.get('currency', 'USD')})",
+                                    height=400,
+                                    margin=dict(l=10, r=10, t=40, b=10)
+                                )
+                                
+                                st.plotly_chart(fig, use_container_width=True)
+                                
+                                # Show latest price statistics
+                                latest = df_detail.iloc[-1] if not df_detail.empty else None
+                                if latest is not None:
+                                    stats_cols = st.columns(4)
+                                    stats_cols[0].metric("Open", f"${latest['open']:.2f}")
+                                    stats_cols[1].metric("High", f"${latest['high']:.2f}")
+                                    stats_cols[2].metric("Low", f"${latest['low']:.2f}")
+                                    stats_cols[3].metric("Close", f"${latest['close']:.2f}")
                             else:
-                                st.warning(f"Could not load detailed data for {selected_symbol}")
+                                st.warning(f"No data points available for {selected_symbol}")
+                        else:
+                            st.warning(f"Could not load detailed data for {selected_symbol}")
                 else:
                     st.warning("No valid stocks available for charting")
         else:
@@ -387,19 +311,23 @@ with col_sidebar:
         with col1:
             limit = st.slider("Number of articles", min_value=3, max_value=15, value=5)
         with col2:
-            if st.button("🔄 Refresh"):
+            if st.button("🔄 Refresh", key="refresh_news"):
                 st.experimental_rerun()
         
-        news = get_recent_news(limit=limit)
+        with st.spinner("Loading news..."):
+            news = get_recent_news(limit=limit)
         
         if news:
             for article in news:
-                with st.expander(f"{article['title']}", expanded=True):
-                    st.markdown(f"**Source:** {article['source']} • **Date:** {article['date']}")
-                    st.markdown(article['content'])
-                    st.markdown(f"[Read more]({article['url']})")
+                try:
+                    with st.expander(f"{article['title']}", expanded=True):
+                        st.markdown(f"**Source:** {article['source']} • **Date:** {article['date']}")
+                        st.markdown(article['content'])
+                        st.markdown(f"[Read more]({article['url']})")
+                except Exception as e:
+                    st.error(f"Error displaying article: {str(e)}")
         else:
-            st.info("No recent news available")
+            st.warning("Could not fetch news articles. The database might be empty or there's a connection issue.")
     
     # Social tab
     with tabs[2]:
@@ -410,16 +338,20 @@ with col_sidebar:
         with col1:
             social_limit = st.slider("Number of posts", min_value=3, max_value=15, value=5)
         with col2:
-            if st.button("🔄 Refresh Posts"):
+            if st.button("🔄 Refresh", key="refresh_social"):
                 st.experimental_rerun()
         
-        posts = get_recent_social_posts(limit=social_limit)
+        with st.spinner("Loading social posts..."):
+            posts = get_recent_social_posts(limit=social_limit)
         
         if posts:
             for post in posts:
-                with st.expander(f"{post['platform']} - {post['date']}", expanded=True):
-                    st.markdown(post['content'])
-                    if post['url']:
-                        st.markdown(f"[View original post]({post['url']})")
+                try:
+                    with st.expander(f"{post['platform']} - {post['date']}", expanded=True):
+                        st.markdown(post['content'])
+                        if post.get('url'):
+                            st.markdown(f"[View original post]({post['url']})")
+                except Exception as e:
+                    st.error(f"Error displaying post: {str(e)}")
         else:
-            st.info("No recent social media posts available") 
+            st.warning("Could not fetch social media posts. The database might be empty or there's a connection issue.") 
