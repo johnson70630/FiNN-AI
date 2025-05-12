@@ -73,6 +73,7 @@ def call_backend(question: str, timeout: int = 60):
     # Extract the answer and any additional information
     answer = result["answer"]
     service = result.get("service", "unknown")
+    # We'll still receive the chain_of_thought but won't display it
     chain_of_thought = result.get("chain_of_thought", [])
 
     # Process answer for display
@@ -93,13 +94,7 @@ def call_backend(question: str, timeout: int = 60):
             else:
                 full_md += f"- {line}\n"
     
-    # Add chain of thought if available
-    if chain_of_thought:
-        full_md += "\n\n---\n**🔄 Reasoning Process:**\n"
-        for step in chain_of_thought:
-            step_name = step.get("step", "Step")
-            step_output = step.get("output", "")
-            full_md += f"- **{step_name}**: {step_output}\n"
+    # Removed the chain of thought section - we don't want to display it
     
     return full_md
 
@@ -283,22 +278,22 @@ if st.session_state.history and len(st.session_state.history) % 2 == 1:
     # There's a user message without an AI response - process it
     prompt = st.session_state.history[-1]["content"]
     
-    # Spinner placeholder
-    spinner_ph = st.empty()
-    with spinner_ph.container():
+    # Add a temporary "thinking" message directly to the chat history
+    with chat_container:
         with st.chat_message("assistant"):
-            st.write("FiNN AI is thinking…")
-
+            thinking_placeholder = st.empty()
+            thinking_placeholder.markdown("*FiNN AI is thinking...*")
+    
     # Backend call
     try:
         assistant_md = call_backend(prompt, timeout=60)
     except Exception as e:
         assistant_md = f"❌ Error: {e}"
-
-    spinner_ph.empty()  # remove spinner
-
-    # Store assistant response
+    
+    # Replace the thinking message with the actual response (don't add a new message)
+    thinking_placeholder.markdown(assistant_md)
+    
+    # Store assistant response in session state 
     st.session_state.history.append({"role": "assistant", "content": assistant_md})
     
-    # Force rerun to show the complete conversation
-    st.rerun() 
+    # No need to rerun here since we've already updated the UI 
