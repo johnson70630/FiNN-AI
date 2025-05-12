@@ -158,7 +158,7 @@ if not st.session_state.api_connected:
     
     # Add auto-refresh button
     if st.button("🔄 Retry Connection"):
-        st.experimental_rerun()
+        st.rerun()
     st.stop()
 else:
     st.success("✅ Connected to FiNN AI !!")
@@ -321,10 +321,27 @@ with col_main:
     
     # Create a fixed-height container for chat history (prevents jumping)
     chat_container = st.container()
-    chat_container.markdown("""
+    # Apply the styling directly to the container
+    st.markdown("""
     <style>
-    .chat-container {
-        height: 400px; 
+    /* Chat container styling */
+    .stChatMessageContent {
+        border-radius: 8px !important;
+    }
+    
+    /* User message styling */
+    .stChatMessage[data-testid="user-message"] .stChatMessageContent {
+        background-color: #e6f2ff !important;
+    }
+    
+    /* Assistant message styling */
+    .stChatMessage[data-testid="assistant-message"] .stChatMessageContent {
+        background-color: #f5f5f5 !important;
+    }
+    
+    /* Custom height for chat area */
+    [data-testid="stVerticalBlock"] > div:has(.stChatMessage) {
+        max-height: 400px;
         overflow-y: auto;
         border: 1px solid #e0e0e0;
         border-radius: 10px;
@@ -333,11 +350,9 @@ with col_main:
         background-color: #f9f9f9;
     }
     </style>
-    <div class="chat-container" id="chat-container">
-    </div>
     """, unsafe_allow_html=True)
     
-    # Display conversation history in a scrollable container
+    # Display conversation history
     with chat_container:
         for msg in st.session_state.history:
             with st.chat_message(msg["role"]):
@@ -355,11 +370,6 @@ with col_main:
         padding: 10px !important;
         border-top: 1px solid #eee !important;
     }
-    
-    /* Fix chat history container */
-    .chat-container {
-        margin-bottom: 70px !important; /* Make room for fixed input */
-    }
     </style>
     """, unsafe_allow_html=True)
     
@@ -369,7 +379,7 @@ with col_main:
         st.session_state.history.append({"role": "user", "content": prompt})
         
         # Rerun to display the updated history (this will automatically display the user's message)
-        st.experimental_rerun()
+        st.rerun()
         
     # Check if we need to process a message
     if st.session_state.history and len(st.session_state.history) % 2 == 1:
@@ -394,7 +404,7 @@ with col_main:
         st.session_state.history.append({"role": "assistant", "content": assistant_md})
         
         # Force rerun to show the complete conversation
-        st.experimental_rerun()
+        st.rerun()
 
 # Sidebar with market data
 with col_sidebar:
@@ -413,7 +423,7 @@ with col_sidebar:
             user_symbols = st.text_input("Enter stock symbols (comma-separated)", value=default_symbols)
         with col2:
             if st.button("🔄 Refresh", key="refresh_stocks"):
-                st.experimental_rerun()
+                st.rerun()
         
         # Fetch stock data
         stock_data = get_stock_prices(user_symbols)
@@ -520,7 +530,7 @@ with col_sidebar:
             limit = st.slider("Number of articles", min_value=3, max_value=15, value=5)
         with col2:
             if st.button("🔄 Refresh", key="refresh_news"):
-                st.experimental_rerun()
+                st.rerun()
         
         with st.spinner("Loading news..."):
             news = get_recent_news(limit=limit)
@@ -558,7 +568,7 @@ with col_sidebar:
             social_limit = st.slider("Number of posts", min_value=3, max_value=15, value=5)
         with col2:
             if st.button("🔄 Refresh", key="refresh_social"):
-                st.experimental_rerun()
+                st.rerun()
         
         with st.spinner("Loading social posts..."):
             posts = get_recent_social_posts(limit=social_limit)
