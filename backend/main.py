@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import Dict, List
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import asyncio
 import os
@@ -127,31 +127,63 @@ def stop_scheduler():
 @app.get("/news")
 def get_news(limit: int = 10, db: Session = Depends(get_db)):
     """Get recent news articles"""
-    articles = db.query(NewsArticle).order_by(NewsArticle.date.desc()).limit(limit).all()
-    return [
-        {
-            "title": article.title,
-            "content": article.content[:200] + "..." if len(article.content) > 200 else article.content,
-            "source": article.source,
-            "url": article.url,
-            "date": article.date.isoformat()
-        }
-        for article in articles
-    ]
+    try:
+        logger.info(f"Fetching {limit} recent news articles")
+        articles = db.query(NewsArticle).order_by(NewsArticle.date.desc()).limit(limit).all()
+        logger.info(f"Found {len(articles)} news articles")
+        
+        results = []
+        for article in articles:
+            try:
+                # Safely handle date formatting
+                date_str = article.date.isoformat() if article.date else datetime.now().isoformat()
+                
+                results.append({
+                    "title": article.title,
+                    "content": article.content[:200] + "..." if len(article.content) > 200 else article.content,
+                    "source": article.source,
+                    "url": article.url,
+                    "date": date_str
+                })
+            except Exception as item_error:
+                logger.error(f"Error processing article {article.id}: {str(item_error)}")
+                # Skip problematic items
+                
+        logger.info(f"Returning {len(results)} news articles")
+        return results
+    except Exception as e:
+        logger.error(f"Error fetching news: {str(e)}")
+        return []
 
 @app.get("/social")
 def get_social_posts(limit: int = 10, db: Session = Depends(get_db)):
     """Get recent social media posts"""
-    posts = db.query(SocialMediaPost).order_by(SocialMediaPost.date.desc()).limit(limit).all()
-    return [
-        {
-            "platform": post.platform,
-            "content": post.content[:200] + "..." if len(post.content) > 200 else post.content,
-            "url": post.url,
-            "date": post.date.isoformat()
-        }
-        for post in posts
-    ]
+    try:
+        logger.info(f"Fetching {limit} recent social media posts")
+        posts = db.query(SocialMediaPost).order_by(SocialMediaPost.date.desc()).limit(limit).all()
+        logger.info(f"Found {len(posts)} social media posts")
+        
+        results = []
+        for post in posts:
+            try:
+                # Safely handle date formatting
+                date_str = post.date.isoformat() if post.date else datetime.now().isoformat()
+                
+                results.append({
+                    "platform": post.platform,
+                    "content": post.content[:200] + "..." if len(post.content) > 200 else post.content,
+                    "url": post.url,
+                    "date": date_str
+                })
+            except Exception as item_error:
+                logger.error(f"Error processing post {post.id}: {str(item_error)}")
+                # Skip problematic items
+                
+        logger.info(f"Returning {len(results)} social media posts")
+        return results
+    except Exception as e:
+        logger.error(f"Error fetching social media posts: {str(e)}")
+        return []
 
 @app.get("/terms")
 def get_financial_terms(db: Session = Depends(get_db)):
