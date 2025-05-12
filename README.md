@@ -3,12 +3,19 @@
 This project implements an AI-powered financial news analysis system that collects and processes financial news, social media data, and financial terms to provide intelligent responses to user queries using a RAG (Retrieval-Augmented Generation) system.
 
 ## Features
-- Real-time financial news data collection
+- Real-time financial news data collection and analysis
+- Hourly automated scraping with exponential backoff and retry mechanisms
+- Stock price data retrieval and technical analysis
+- Stock impact analysis (which stocks are affected by news)
 - Social media sentiment analysis for financial markets
-- Financial knowledge base integration
-- Advanced RAG implementation for accurate responses
-- Embeddings-based search and retrieval
+- Financial knowledge base with terminology and definitions
+- Multi-page Streamlit interface:
+  - Market Analysis dashboard with stock charts
+  - Dark-themed chat interface with AI assistant
+- Advanced RAG implementation with structured reasoning chains
+- Embeddings-based semantic search and retrieval
 - SQLite database for data persistence
+- Direct retrieval of most recent news with AI-generated summaries
 
 ## Prerequisites
 - Python 3.8 or higher
@@ -99,10 +106,16 @@ This launches the Streamlit user interface that connects to the backend API.
 │   │   ├── financial_knowledge.py    # Financial terms collection
 │   │   └── scraper_service.py        # Orchestration service
 │   └── services/         # Core business logic
-│       ├── rag_service.py           # RAG implementation for Q&A
-│       └── simple_query_service.py  # Fallback query service
+│       ├── rag_service.py                # RAG implementation for Q&A
+│       ├── chain_service.py              # Chain-based structured reasoning
+│       ├── stock_analysis_service.py     # Stock analysis and sentiment
+│       ├── stock_impact_service.py       # News impact on stocks
+│       ├── embedding_service.py          # Vector embeddings for DB items
+│       └── simple_query_service.py       # Fallback query service
 ├── frontend/            # User interface
-│   └── app.py           # Streamlit frontend 
+│   ├── app.py           # Streamlit main page (Market Analysis)
+│   └── pages/           # Multi-page Streamlit app
+│       └── 01_Chat.py   # Chat interface with AI assistant
 ├── data/                # Data storage directory (SQLite database)
 ├── requirements.txt     # Project dependencies
 └── README.md           # Project documentation
@@ -115,6 +128,7 @@ The system will automatically collect data from various sources:
 - Financial news articles from major financial news websites
 - Social media posts from finance-related channels
 - Financial terminology and definitions
+- Stock price data and market trends
 
 ### Web API
 1. Start the API server with `python backend/main.py`
@@ -123,7 +137,15 @@ The system will automatically collect data from various sources:
    - `/social`: Get social media posts
    - `/terms`: Get financial terms
    - `/query`: Submit natural language queries
-3. Integrate with your own frontend or applications
+   - `/stocks`: Get stock price information
+   - `/stock/{symbol}`: Get detailed stock data
+   - `/stock-analysis/{symbol}`: Get comprehensive stock analysis
+   - `/news/impact`: Analyze news impact on stocks
+
+### User Interface
+The application has a multi-page Streamlit interface:
+1. **Market Analysis**: Stock analysis, price charts, news feed, and social media monitoring
+2. **Chat**: Conversational interface to interact with the AI assistant about financial topics
 
 ## Troubleshooting
 
