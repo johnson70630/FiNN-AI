@@ -153,9 +153,156 @@ col_main, col_sidebar = st.columns([2, 1.5])
 
 # Main chat area
 with col_main:
+    # Add a button for stock analysis
+    st.markdown("### 📊 Stock Analysis")
+    
+    stock_analysis_container = st.container()
+    
+    with stock_analysis_container:
+        # Create a form for stock analysis
+        with st.form(key="stock_analysis_form"):
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                stock_symbol = st.text_input("Enter stock symbol (e.g., AAPL, MSFT, GOOGL)", value="AAPL").upper()
+            with col2:
+                days_lookback = st.selectbox("Analysis timeframe", [7, 14, 30, 60, 90, 180, 365], index=2)
+            
+            analyze_button = st.form_submit_button("🔍 Analyze Stock")
+        
+        # Handle stock analysis
+        if analyze_button:
+            with st.spinner(f"Analyzing {stock_symbol} based on price data, news, and social sentiment..."):
+                try:
+                    # Call the backend API
+                    response = requests.get(f"{BACKEND_URL}/stock-analysis/{stock_symbol}?days={days_lookback}", timeout=30)
+                    response.raise_for_status()
+                    analysis = response.json()
+                    
+                    # Display analysis results
+                    st.subheader(f"Analysis for {analysis['company_name']} ({analysis['symbol']})")
+                    
+                    # Stock price and basic info
+                    col1, col2, col3 = st.columns([1, 1, 1])
+                    col1.metric("Current Price", f"${analysis['current_price']:.2f}")
+                    
+                    # Price analysis section
+                    if "price_analysis" in analysis and "error" not in analysis["price_analysis"]:
+                        price_analysis = analysis["price_analysis"]
+                        
+                        col2.metric("Price Change", f"{price_analysis['total_change_pct']}%", 
+                                   delta_color="normal" if price_analysis['total_change_pct'] >= 0 else "inverse")
+                        
+                        col3.metric("Volatility", f"{price_analysis['volatility_pct']}%")
+                        
+                        st.markdown(f"**Price Trend:** {price_analysis['summary']}")
+                        
+                        # Create a horizontal rule
+                        st.markdown("---")
+                    
+                    # Create tabs for detailed analysis
+                    news_tab, social_tab, signal_tab = st.tabs(["📰 News Analysis", "💬 Social Media", "🎯 Signal & Recommendation"])
+                    
+                    # News tab content
+                    with news_tab:
+                        if "news_analysis" in analysis and "error" not in analysis["news_analysis"]:
+                            news = analysis["news_analysis"]
+                            st.markdown(f"**News Sentiment:** {news['sentiment'].title()} ({news['sentiment_strength']})")
+                            st.markdown(news["summary"])
+                            
+                            if "recent_articles" in news and news["recent_articles"]:
+                                st.subheader("Recent News Articles")
+                                for article in news["recent_articles"]:
+                                    sentiment_color = "green" if article["sentiment"] == "positive" else (
+                                        "red" if article["sentiment"] == "negative" else "gray")
+                                    
+                                    st.markdown(f"**{article['title']}**")
+                                    st.markdown(f"Source: {article['source']} | Date: {article['date'][:10]} | "
+                                              f"Sentiment: <span style='color:{sentiment_color}'>{article['sentiment'].title()}</span>",
+                                              unsafe_allow_html=True)
+                                    st.markdown(f"[Read more]({article['url']})")
+                                    st.markdown("---")
+                        else:
+                            st.info("No news analysis available")
+                    
+                    # Social media tab content
+                    with social_tab:
+                        if "social_analysis" in analysis and "error" not in analysis["social_analysis"]:
+                            social = analysis["social_analysis"]
+                            st.markdown(f"**Social Media Sentiment:** {social['sentiment'].title()} ({social['sentiment_strength']})")
+                            st.markdown(social["summary"])
+                            
+                            # Display platform distribution
+                            if "platforms" in social and social["platforms"]:
+                                st.markdown(f"**Platforms:** {', '.join(social['platforms'])}")
+                            
+                            # Display sentiment distribution
+                            if all(k in social for k in ["positive_count", "neutral_count", "negative_count"]):
+                                sentiment_data = {
+                                    "Sentiment": ["Positive", "Neutral", "Negative"],
+                                    "Count": [social["positive_count"], social["neutral_count"], social["negative_count"]]
+                                }
+                                sentiment_df = pd.DataFrame(sentiment_data)
+                                
+                                # Only show chart if there's meaningful data
+                                if sum(sentiment_df["Count"]) > 0:
+                                    st.markdown("**Sentiment Distribution:**")
+                                    chart = go.Figure(data=[
+                                        go.Bar(
+                                            x=sentiment_df["Sentiment"],
+                                            y=sentiment_df["Count"],
+                                            marker_color=["green", "gray", "red"]
+                                        )
+                                    ])
+                                    chart.update_layout(height=300)
+                                    st.plotly_chart(chart, use_container_width=True)
+                        else:
+                            st.info("No social media analysis available")
+                    
+                    # Signal tab content
+                    with signal_tab:
+                        if "combined_analysis" in analysis and "error" not in analysis["combined_analysis"]:
+                            combined = analysis["combined_analysis"]
+                            
+                            # Display recommendation prominently
+                            if "recommendation" in combined:
+                                rec = combined["recommendation"]
+                                rec_parts = rec.split(" - ", 1)
+                                if len(rec_parts) == 2:
+                                    signal, explanation = rec_parts
+                                    
+                                    # Set color based on signal
+                                    if "Buy" in signal:
+                                        signal_color = "green"
+                                    elif "Sell" in signal:
+                                        signal_color = "red"
+                                    else:
+                                        signal_color = "gray"
+                                        
+                                    st.markdown(f"### <span style='color:{signal_color}'>{signal}</span>", unsafe_allow_html=True)
+                                    st.markdown(explanation)
+                                else:
+                                    st.markdown(f"### {rec}")
+                            
+                            # Show reasoning
+                            if "reasoning" in combined and combined["reasoning"]:
+                                st.markdown("**Analysis Factors:**")
+                                for reason in combined["reasoning"]:
+                                    st.markdown(f"- {reason}")
+                        else:
+                            st.info("No combined signal analysis available")
+                    
+                except Exception as e:
+                    st.error(f"Error analyzing stock: {str(e)}")
+    
+    # Separator before chat
+    st.markdown("---")
+    
     # Session state for chat history
     if "history" not in st.session_state:
         st.session_state.history = []
+
+    # Chat title
+    st.markdown("### 💬 Chat with FiNN AI")
 
     # Display conversation history
     for msg in st.session_state.history:

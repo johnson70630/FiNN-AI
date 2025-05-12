@@ -18,6 +18,7 @@ from backend.core.database import get_db, NewsArticle, SocialMediaPost, Financia
 from backend.services.rag_service import RAGService
 from backend.services.simple_query_service import SimpleQueryService
 from backend.services.stock_service import StockService
+from backend.services.stock_analysis_service import StockAnalysisService
 from backend.scrapers.scraper_service import DataCollectionService, ScraperCoordinator
 from sqlalchemy import func
 
@@ -245,6 +246,43 @@ async def get_stock(symbol: str, period: str = "1d", interval: str = "15m"):
         return stock_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/stock-analysis/{symbol}")
+async def analyze_stock(symbol: str, days: int = 30, db: Session = Depends(get_db)):
+    """
+    Analyze a stock using price data, news sentiment, and social media trends
+    
+    Args:
+        symbol: Stock ticker symbol
+        days: Number of days to look back for analysis (default: 30)
+        
+    Returns:
+        Dict containing comprehensive analysis results
+    """
+    try:
+        logger.info(f"Received request to analyze stock {symbol} with {days} days lookback")
+        
+        # Validate inputs
+        if days < 5 or days > 365:
+            raise HTTPException(status_code=400, detail="Days must be between 5 and 365")
+            
+        # Initialize analysis service with database session
+        analyzer = StockAnalysisService(db)
+        
+        # Perform comprehensive analysis
+        analysis = await analyzer.analyze_stock(symbol, days_lookback=days)
+        
+        # Check for errors
+        if "error" in analysis:
+            raise HTTPException(status_code=404, detail=analysis["error"])
+            
+        return analysis
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Error analyzing stock {symbol}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to analyze stock: {str(e)}")
 
 if __name__ == "__main__":
     # Run the FastAPI app directly with uvicorn
