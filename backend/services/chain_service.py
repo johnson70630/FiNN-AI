@@ -1,9 +1,15 @@
 from backend.services.rag_service import RAGService
 from backend.services.stock_analysis_service import StockAnalysisService
 from backend.services.stock_impact_service import StockImpactService
+from backend.core.database import NewsArticle
 from sqlalchemy.orm import Session
+from datetime import datetime
 import re
 import logging
+import asyncio
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +46,8 @@ class ChainService:
             answer, chain = await self._investment_advice_chain(question)
         elif query_type == "news_impact":
             answer, chain = await self._news_impact_chain(question)
+        elif query_type == "recent_news":
+            answer, chain = await self._recent_news_chain(question)
         else:
             # Default to RAG for general questions
             answer = await self.rag_service.process_question(question)
@@ -56,6 +64,19 @@ class ChainService:
     def _classify_query(self, question: str) -> str:
         """Classify the type of financial query"""
         question_lower = question.lower()
+        
+        # Check for recent news patterns
+        recent_news_patterns = [
+            r"(?:show|get|tell|give|what are)\s+(?:me)?\s+(?:the)?\s*(?:recent|latest|newest|current|today'?s|fresh)\s+(?:news|articles)",
+            r"(?:recent|latest|newest|current)\s+(?:\d+)?\s*(?:news|articles)",
+            r"(?:what is|what's)\s+(?:happening|new|going on|the latest)",
+            r"(?:news|articles)\s+(?:from|in)\s+(?:the)?\s+(?:last|past|recent)\s+(?:\d+)?\s*(?:days?|hours?|weeks?)",
+            r"(?:top|latest)\s+(?:\d+)?\s*headlines",
+            r"breaking news"
+        ]
+
+        if any(re.search(pattern, question_lower) for pattern in recent_news_patterns):
+            return "recent_news"
         
         # Check for stock analysis patterns
         stock_patterns = [
@@ -262,6 +283,78 @@ class ChainService:
                 date_str = article["date"].strftime("%Y-%m-%d") if hasattr(article["date"], "strftime") else str(article["date"])
                 response.append(f"* **{article['title']}** ({article['source']}, {date_str})")
                 response.append(f"  - {article['impact_analysis']}\n")
+        
+        # Join all parts with proper formatting
+        final_response = "\n".join(response)
+        return final_response, chain
+    
+    async def _recent_news_chain(self, question: str) -> tuple:
+        """Chain for recent news queries - get latest news directly from DB"""
+        chain = [
+            {"step": "Query Classification", "output": "Recent News Query"},
+            {"step": "Data Collection", "output": "Retrieving most recent news articles by date"}
+        ]
+        
+        # Extract the number of articles to return (default to 5)
+        limit = 5
+        num_match = re.search(r"(\d+)\s+(?:news|articles)", question.lower())
+        if num_match:
+            try:
+                limit = min(int(num_match.group(1)), 20)  # Cap at 20 for reasonable response size
+            except:
+                limit = 5
+                
+        chain.append({"step": "Parameter Extraction", "output": f"Will return {limit} most recent articles"})
+        
+        # Query the database directly for the most recent articles by date
+        articles = self.db.query(NewsArticle).order_by(NewsArticle.date.desc()).limit(limit).all()
+        
+        if not articles:
+            return "I couldn't find any recent news articles in the database.", chain
+        
+        # Format the response
+        response = []
+        response.append(f"# Latest {len(articles)} Financial News Articles\n")
+        
+        # Initialize OpenAI summarizer
+        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.0)
+        summarize_prompt = ChatPromptTemplate.from_template(
+            "You are a financial news summarizer. Create a 1-2 sentence concise summary of this financial news article.\n\n"
+            "Article Title: {title}\n\n"
+            "Article Content: {content}\n\n"
+            "Write only the summary, keep it under 30 words, and focus on the key financial implications."
+        )
+        summarize_chain = summarize_prompt | llm | StrOutputParser()
+        
+        # Process each article with summary
+        for article in articles:
+            date_str = article.date.strftime("%Y-%m-%d %H:%M") if hasattr(article.date, "strftime") else str(article.date)
+            response.append(f"## {article.title}")
+            response.append(f"**Source:** {article.source} | **Date:** {date_str}")
+            response.append("")  # Add blank line for better readability
+            
+            # Generate summary if content is available
+            if article.content and len(article.content) > 50:
+                try:
+                    # Generate summary
+                    summary = await summarize_chain.ainvoke({
+                        "title": article.title,
+                        "content": article.content[:1000]  # Limit to first 1000 chars for API efficiency
+                    })
+                    response.append(f"**Summary:** {summary}")
+                except Exception as e:
+                    logger.error(f"Error generating summary: {str(e)}")
+                    # Fall back to truncated content if summary fails
+                    content_preview = article.content[:100] + "..." if len(article.content) > 100 else article.content
+                    response.append(f"{content_preview}")
+            else:
+                # If content is too short, just use it directly
+                response.append(f"{article.content}")
+                
+            response.append(f"[Read more]({article.url})\n")
+        
+        chain.append({"step": "Content Summarization", "output": f"Generated summaries for {len(articles)} recent news articles"})
+        chain.append({"step": "Response Generation", "output": f"Formatted response with {len(articles)} recent news articles and summaries"})
         
         # Join all parts with proper formatting
         final_response = "\n".join(response)
