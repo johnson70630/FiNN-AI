@@ -184,7 +184,17 @@ class StockAnalysisService:
                     relevant_news.append(article)
             
             if not relevant_news:
-                return {"news_analysis": {"articles_found": 0, "summary": "No relevant news found for analysis"}}
+                return {"news_analysis": {
+                    "articles_found": 0, 
+                    "articles_analyzed": 0,
+                    "sentiment": "neutral",
+                    "sentiment_strength": "neutral",
+                    "positive_count": 0,
+                    "neutral_count": 0,
+                    "negative_count": 0,
+                    "recent_articles": [],
+                    "summary": f"No relevant news found for {symbol} in the past {days_lookback} days."
+                }}
                 
             # Simple sentiment analysis
             positive_words = ["bullish", "growth", "profit", "gain", "positive", "buy", "upward", "outperform", 
@@ -219,14 +229,33 @@ class StockAnalysisService:
                 # Create article summary
                 article_summaries.append({
                     "title": article.title,
-                    "date": article.date.isoformat(),
+                    "date": article.date.isoformat() if hasattr(article.date, 'isoformat') else str(article.date),
                     "source": article.source,
                     "sentiment": sentiment,
                     "url": article.url
                 })
             
+            # Handle empty article_sentiments case
+            if not article_sentiments:
+                return {"news_analysis": {
+                    "articles_found": len(relevant_news),
+                    "articles_analyzed": 0,
+                    "sentiment": "neutral",
+                    "sentiment_strength": "neutral",
+                    "positive_count": 0,
+                    "neutral_count": 0,
+                    "negative_count": 0,
+                    "recent_articles": article_summaries,
+                    "summary": f"Could not determine sentiment for {symbol} news articles."
+                }}
+            
             # Overall sentiment analysis
             sentiment_counts = Counter(article_sentiments)
+            # Ensure all sentiment types have a count
+            sentiment_counts.setdefault("positive", 0)
+            sentiment_counts.setdefault("neutral", 0)
+            sentiment_counts.setdefault("negative", 0)
+            
             if sentiment_counts["positive"] > sentiment_counts["negative"] * 1.5:
                 overall_sentiment = "positive"
                 sentiment_strength = "strong" if sentiment_counts["positive"] > 2 * sentiment_counts["neutral"] else "moderate"
@@ -261,7 +290,18 @@ class StockAnalysisService:
             
         except Exception as e:
             logger.error(f"Error in news sentiment analysis for {symbol}: {str(e)}")
-            return {"news_analysis": {"error": f"Error in news analysis: {str(e)}"}}
+            return {"news_analysis": {
+                "error": f"Error in news analysis: {str(e)}",
+                "articles_found": 0,
+                "articles_analyzed": 0,
+                "sentiment": "neutral",
+                "sentiment_strength": "neutral",
+                "positive_count": 0,
+                "neutral_count": 0,
+                "negative_count": 0,
+                "recent_articles": [],
+                "summary": f"Could not analyze news sentiment for {symbol} due to an error."
+            }}
     
     async def _analyze_social_sentiment(self, symbol: str, company_name: str, days_lookback: int) -> Dict:
         """Analyze social media sentiment for a stock"""
@@ -289,7 +329,18 @@ class StockAnalysisService:
                     relevant_posts.append(post)
             
             if not relevant_posts:
-                return {"social_analysis": {"posts_found": 0, "summary": "No relevant social media posts found for analysis"}}
+                return {"social_analysis": {
+                    "posts_found": 0,
+                    "posts_analyzed": 0,
+                    "sentiment": "neutral",
+                    "sentiment_strength": "neutral",
+                    "positive_count": 0,
+                    "neutral_count": 0,
+                    "negative_count": 0,
+                    "platforms": [],
+                    "recent_posts": [],
+                    "summary": f"No relevant social media posts found for {symbol} in the past {days_lookback} days."
+                }}
                 
             # Simple sentiment analysis
             positive_words = ["bullish", "growth", "profit", "gain", "positive", "buy", "upward", "moon", "rich", 
@@ -324,13 +375,33 @@ class StockAnalysisService:
                 # Create post summary
                 post_summaries.append({
                     "platform": post.platform,
-                    "date": post.date.isoformat(),
+                    "date": post.date.isoformat() if hasattr(post.date, 'isoformat') else str(post.date),
                     "sentiment": sentiment,
                     "url": post.url
                 })
             
+            # Handle empty post_sentiments case
+            if not post_sentiments:
+                return {"social_analysis": {
+                    "posts_found": len(relevant_posts),
+                    "posts_analyzed": 0,
+                    "sentiment": "neutral",
+                    "sentiment_strength": "neutral",
+                    "positive_count": 0,
+                    "neutral_count": 0,
+                    "negative_count": 0,
+                    "platforms": list(set(post.platform for post in relevant_posts)),
+                    "recent_posts": post_summaries[:5],
+                    "summary": f"Could not determine sentiment for {symbol} social media posts."
+                }}
+            
             # Overall sentiment analysis
             sentiment_counts = Counter(post_sentiments)
+            # Ensure all sentiment types have a count
+            sentiment_counts.setdefault("positive", 0)
+            sentiment_counts.setdefault("neutral", 0)
+            sentiment_counts.setdefault("negative", 0)
+            
             if sentiment_counts["positive"] > sentiment_counts["negative"] * 1.5:
                 overall_sentiment = "positive"
                 sentiment_strength = "strong" if sentiment_counts["positive"] > 2 * sentiment_counts["neutral"] else "moderate"
@@ -366,7 +437,19 @@ class StockAnalysisService:
             
         except Exception as e:
             logger.error(f"Error in social media sentiment analysis for {symbol}: {str(e)}")
-            return {"social_analysis": {"error": f"Error in social media analysis: {str(e)}"}}
+            return {"social_analysis": {
+                "error": f"Error in social media analysis: {str(e)}",
+                "posts_found": 0,
+                "posts_analyzed": 0,
+                "sentiment": "neutral",
+                "sentiment_strength": "neutral",
+                "positive_count": 0,
+                "neutral_count": 0,
+                "negative_count": 0,
+                "platforms": [],
+                "recent_posts": [],
+                "summary": f"Could not analyze social media sentiment for {symbol} due to an error."
+            }}
     
     async def _calculate_combined_signal(self, price_df: pd.DataFrame, symbol: str, company_name: str, days_lookback: int) -> Dict:
         """Calculate a combined signal based on all analysis factors"""
