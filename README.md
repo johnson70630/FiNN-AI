@@ -32,7 +32,7 @@ Copy `.env.template` to `.env` and fill in your API keys:
 # OpenAI API Key
 OPENAI_API_KEY=your_openai_api_key
 
-# LangSmith
+# LangSmith (Optional)
 LANGSMITH_TRACING=your_langsmith_tracing
 LANGSMITH_ENDPOINT=your_langsmith_endpoint
 LANGSMITH_API_KEY=your_langsmith_api_key
