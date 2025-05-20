@@ -1,4 +1,4 @@
-# Financial News AI Agent
+# FiNN-AI
 
 This project implements an AI-powered financial news analysis system that collects and processes financial news, social media data, and financial terms to provide intelligent responses to user queries using a RAG (Retrieval-Augmented Generation) system.
 
@@ -24,8 +24,8 @@ This project implements an AI-powered financial news analysis system that collec
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/johnson70630/Financial-News-AI-Agent.git
-cd Financial-News-AI-Agent
+git clone https://github.com/johnson70630/FiNN-AI.git
+cd FiNN-AI
 ```
 
 2. Install dependencies:
