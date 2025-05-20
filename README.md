@@ -2,6 +2,8 @@
 
 This project implements an AI-powered financial news analysis system that collects and processes financial news, social media data, and financial terms to provide intelligent responses to user queries using a RAG (Retrieval-Augmented Generation) system.
 
+![img](img/flow.jpeg)
+
 ## Features
 - Real-time financial news data collection and analysis
 - Hourly automated scraping with exponential backoff and retry mechanisms
